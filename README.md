@@ -1,4 +1,4 @@
-# TransLoop
+# TransLoop（译环）
 
 桌面端翻译工具。两种使用方式：
 
