@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/popupview.tsx","./src/settingsmodal.tsx","./src/main.tsx","./src/popup.tsx","./src/store.ts","./src/providers/deepseek.ts","./src/providers/index.ts","./src/providers/stubs.ts","./src/providers/types.ts"],"version":"5.9.3"}
