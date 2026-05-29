@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   DEFAULT_SETTINGS,
+  getProviderKey,
   loadSettings,
   saveSettings,
+  setProviderKey,
   type AppSettings,
 } from "./store";
 import { PROVIDER_REGISTRY, type ProviderName } from "./providers/types";
@@ -20,16 +22,34 @@ type StatusKind = "idle" | "saving" | "success" | "error";
 
 export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
   const [draft, setDraft] = useState<AppSettings>(initial);
+  // 按提供方缓存 API Key。输入框显示/编辑的是 keyMap[当前提供方]，
+  // 因此切换提供方会自动切换到对应的 key，且各家分别保存。
+  const [keyMap, setKeyMap] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<{ kind: StatusKind; text: string }>({
     kind: "idle",
     text: "",
   });
 
   useEffect(() => {
-    if (open) {
-      setDraft(initial);
-      setStatus({ kind: "idle", text: "" });
-    }
+    if (!open) return;
+    setDraft(initial);
+    setStatus({ kind: "idle", text: "" });
+    // 预载所有提供方的 key，切换时无需等待、不闪烁。
+    let cancelled = false;
+    Promise.all(
+      PROVIDER_REGISTRY.map(async (p) => [p.id, await getProviderKey(p.id)] as const),
+    ).then((entries) => {
+      if (cancelled) return;
+      const map: Record<string, string> = {};
+      for (const [id, key] of entries) map[id] = key;
+      // 用 initial 里已解析出的当前 key 覆盖，保证与刚打开时一致。
+      map[initial.provider] = initial.apiKey;
+      map[initial.recognizeProvider] = initial.recognizeApiKey;
+      setKeyMap(map);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [open, initial]);
 
   useEffect(() => {
@@ -65,6 +85,12 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
     setStatus({ kind: "idle", text: "" });
   }
 
+  // 设置某提供方的 key（编辑输入框时调用）。
+  function setKeyFor(provider: ProviderName, value: string) {
+    setKeyMap((prev) => ({ ...prev, [provider]: value }));
+    setStatus({ kind: "idle", text: "" });
+  }
+
   function handleProviderChange(next: ProviderName) {
     const meta = PROVIDER_REGISTRY.find((p) => p.id === next);
     setDraft((prev) => ({
@@ -74,6 +100,12 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
       model: meta?.defaultModel ?? prev.model,
     }));
     setStatus({ kind: "idle", text: "" });
+    // 若该提供方的 key 尚未在缓存里，补取一次（预载兜底）。
+    if (keyMap[next] === undefined) {
+      getProviderKey(next).then((k) =>
+        setKeyMap((prev) => (prev[next] === undefined ? { ...prev, [next]: k } : prev)),
+      );
+    }
   }
 
   function handleRecognizeProviderChange(next: ProviderName) {
@@ -85,14 +117,31 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
       recognizeModel: meta?.defaultModel ?? prev.recognizeModel,
     }));
     setStatus({ kind: "idle", text: "" });
+    if (keyMap[next] === undefined) {
+      getProviderKey(next).then((k) =>
+        setKeyMap((prev) => (prev[next] === undefined ? { ...prev, [next]: k } : prev)),
+      );
+    }
   }
 
   async function handleSave() {
     setStatus({ kind: "saving", text: "保存中…" });
     try {
-      await saveSettings(draft);
+      // 写入所有被编辑过的提供方 key（按家分别存储）。
+      await Promise.all(
+        Object.entries(keyMap).map(([provider, key]) =>
+          setProviderKey(provider as ProviderName, key),
+        ),
+      );
+      // draft 的当前生效 key 从缓存解析，保证 saveSettings 写对值。
+      const next: AppSettings = {
+        ...draft,
+        apiKey: keyMap[draft.provider] ?? "",
+        recognizeApiKey: keyMap[draft.recognizeProvider] ?? "",
+      };
+      await saveSettings(next);
       await invoke("reload_shortcuts");
-      onSaved(draft);
+      onSaved(next);
       // 保存成功后自动关闭设置窗口；失败时保持打开以展示错误。
       onClose();
     } catch (e) {
@@ -156,8 +205,8 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
             {draft.ocrMode === "A" && !visionMeta?.supportVision && (
               <span className="hint" style={{ color: "#d44" }}>
                 {draft.visionCollab
-                  ? "下方「识别模型」不支持图片输入，请改用 OpenAI / Qwen3-VL / Grok。"
-                  : "当前翻译提供方不支持图片输入。模式 A 请选择支持多模态的提供方（OpenAI / Qwen3-VL / Grok），或开启多模型协作单独指定识别模型。"}
+                  ? "下方「识别模型」不支持图片输入，请改用 OpenAI / Claude / Gemini / Qwen3-VL / Grok。"
+                  : "当前翻译提供方不支持图片输入。模式 A 请选择支持多模态的提供方（OpenAI / Claude / Gemini / Qwen3-VL / Grok），或开启多模型协作单独指定识别模型。"}
               </span>
             )}
             {draft.ocrMode === "B" && (
@@ -204,8 +253,8 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
                     <label>识别模型 API Key</label>
                     <input
                       type="password"
-                      value={draft.recognizeApiKey}
-                      onChange={(e) => update("recognizeApiKey", e.target.value)}
+                      value={keyMap[draft.recognizeProvider] ?? ""}
+                      onChange={(e) => setKeyFor(draft.recognizeProvider, e.target.value)}
                       placeholder="sk-..."
                       spellCheck={false}
                     />
@@ -250,7 +299,7 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
             </select>
             {providerMeta && !providerMeta.implemented && (
               <span className="hint" style={{ color: "#d44" }}>
-                该 Provider 仅占位，调用会报错。请选 DeepSeek。
+                该 Provider 暂未实现，调用会报错，请选择其他提供方。
               </span>
             )}
           </div>
@@ -259,11 +308,14 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
             <label>API Key</label>
             <input
               type="password"
-              value={draft.apiKey}
-              onChange={(e) => update("apiKey", e.target.value)}
+              value={keyMap[draft.provider] ?? ""}
+              onChange={(e) => setKeyFor(draft.provider, e.target.value)}
               placeholder="sk-..."
               spellCheck={false}
             />
+            <span className="hint">
+              按提供方分别保存，切换提供方会自动载入对应的 Key；写入系统凭据管理器（keyring），不以明文存放于配置文件。
+            </span>
           </div>
 
           <div className="row">

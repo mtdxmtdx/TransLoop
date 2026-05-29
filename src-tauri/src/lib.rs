@@ -114,6 +114,50 @@ async fn ocr_windows(image: String, lang: Option<String>) -> Result<String, Stri
         .map_err(|e| e.to_string())
 }
 
+// ---- API Key 安全存储：OS keyring（Windows 凭据管理器 / macOS Keychain 等）----
+
+const KEYRING_SERVICE: &str = "com.transloop.app";
+
+fn keyring_entry(key: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, key).map_err(|e| format!("keyring 初始化失败: {e}"))
+}
+
+/// 写入一个密钥；空字符串等同删除。
+#[tauri::command]
+async fn set_secret(key: String, value: String) -> Result<(), String> {
+    let entry = keyring_entry(&key)?;
+    if value.is_empty() {
+        return match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(format!("删除密钥失败: {e}")),
+        };
+    }
+    entry
+        .set_password(&value)
+        .map_err(|e| format!("保存密钥失败: {e}"))
+}
+
+/// 读取一个密钥；不存在时返回 None。
+#[tauri::command]
+async fn get_secret(key: String) -> Result<Option<String>, String> {
+    let entry = keyring_entry(&key)?;
+    match entry.get_password() {
+        Ok(v) => Ok(Some(v)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("读取密钥失败: {e}")),
+    }
+}
+
+/// 删除一个密钥。
+#[tauri::command]
+async fn delete_secret(key: String) -> Result<(), String> {
+    let entry = keyring_entry(&key)?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("删除密钥失败: {e}")),
+    }
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出 TransLoop", true, None::<&str>)?;
@@ -195,7 +239,10 @@ pub fn run() {
             finish_capture,
             cancel_capture,
             hide_capture,
-            ocr_windows
+            ocr_windows,
+            set_secret,
+            get_secret,
+            delete_secret
         ])
         .run(tauri::generate_context!())
         .expect("error while running TransLoop");

@@ -31,11 +31,14 @@ interface CompatOptions {
   /** Fallback model when config omits one. */
   defaultModel: string;
   supportVision: boolean;
+  /** Chat completions path. Defaults to "/chat/completions"; MiniMax v2 uses
+   *  "/text/chatcompletion_v2". */
+  chatPath?: string;
 }
 
 /**
  * Build a provider that speaks the OpenAI `/chat/completions` dialect.
- * Covers OpenAI, Qwen (compatible mode), Grok, and most中转代理.
+ * Covers OpenAI, Qwen (compatible mode), Grok, MiniMax, and most中转代理.
  * - `translate`: streaming SSE, identical contract to the DeepSeek provider.
  * - `translateImage`: one-shot multimodal call (OCR mode A) that asks the model
  *   to return JSON `{ original, translation }`.
@@ -46,6 +49,7 @@ export function createOpenAICompatProvider(
 ): TranslationProvider {
   const baseUrl = (cfg.baseUrl || opts.defaultBaseUrl).replace(/\/$/, "");
   const model = cfg.model || opts.defaultModel;
+  const chatUrl = `${baseUrl}${opts.chatPath ?? "/chat/completions"}`;
 
   function authHeaders(accept: string): Record<string, string> {
     if (!cfg.apiKey) {
@@ -77,7 +81,7 @@ export function createOpenAICompatProvider(
           { role: "user", content: text },
         ],
       };
-      const res = await fetch(`${baseUrl}/chat/completions`, {
+      const res = await fetch(chatUrl, {
         method: "POST",
         headers: authHeaders("text/event-stream"),
         body: JSON.stringify(body),
@@ -132,7 +136,7 @@ export function createOpenAICompatProvider(
           },
         ],
       };
-      const res = await fetch(`${baseUrl}/chat/completions`, {
+      const res = await fetch(chatUrl, {
         method: "POST",
         headers: authHeaders("application/json"),
         body: JSON.stringify(body),
@@ -173,7 +177,7 @@ export function createOpenAICompatProvider(
           },
         ],
       };
-      const res = await fetch(`${baseUrl}/chat/completions`, {
+      const res = await fetch(chatUrl, {
         method: "POST",
         headers: authHeaders("application/json"),
         body: JSON.stringify(body),

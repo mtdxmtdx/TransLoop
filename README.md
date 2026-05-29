@@ -27,7 +27,7 @@
 | 桌面框架 | Tauri 2 (Rust) |
 | 前端 | React 18 + TypeScript + Vite |
 | 前端插件 | plugin-global-shortcut, plugin-clipboard-manager, plugin-store, plugin-http |
-| Rust 依赖 | enigo（模拟按键）, xcap（屏幕截图）, windows（WinRT OCR）, tokio, serde |
+| Rust 依赖 | enigo（模拟按键）, xcap（屏幕截图）, windows（WinRT OCR）, keyring（OS 凭据管理器）, tokio, serde |
 
 ## 目录
 
@@ -48,9 +48,11 @@ TransLoop/
 │   ├── styles.css
 │   └── providers/
 │       ├── types.ts             # TranslationProvider 接口 + PROVIDER_REGISTRY
-│       ├── openai-compat.ts     # OpenAI 兼容层（translate + translateImage + recognizeImage）
-│       ├── deepseek.ts          # DeepSeek 实现（文本翻译，含 SSE 流式）
-│       ├── stubs.ts             # Claude / Gemini / MiniMax 占位
+│       ├── openai-compat.ts     # OpenAI 兼容层（openai/qwen/grok/minimax；chatPath 选项）
+│       ├── deepseek.ts          # DeepSeek（文本 SSE 流式，含 thinking:disabled）
+│       ├── claude.ts            # Anthropic Claude（Messages API，x-api-key，content_block_delta）
+│       ├── gemini.ts            # Google Gemini（generateContent / streamGenerateContent，inlineData）
+│       ├── sse.ts               # 通用 SSE 行读取 + data: URL 拆分
 │       └── index.ts             # createProvider 工厂
 └── src-tauri/
     ├── tauri.conf.json
@@ -109,13 +111,12 @@ pnpm tauri build    # 生产构建
 
 `%APPDATA%\com.transloop.app\settings.json`（Windows）
 
-字段：`hotkey`, `captureHotkey`, `provider`, `apiKey`, `baseUrl`, `model`, `fromLang`, `toLang`, `streamOutput`, `ocrMode`, `visionCollab`, `recognizeProvider`, `recognizeApiKey`, `recognizeBaseUrl`, `recognizeModel`。
+字段（不含密钥）：`hotkey`, `captureHotkey`, `provider`, `baseUrl`, `model`, `fromLang`, `toLang`, `streamOutput`, `ocrMode`, `visionCollab`, `recognizeProvider`, `recognizeBaseUrl`, `recognizeModel`。API Key 按提供方分开保存在 OS keyring 中（`apikey.<provider>`），不在 settings.json 里落盘。
 
 ## 已知约束
 
 - 划词依赖剪贴板：会临时覆盖后恢复用户原有内容。个别 UIPI 保护的窗口可能漏读。
-- API Key 以明文存盘，计划后续阶段改用 OS keyring。
-- Claude / Gemini / MiniMax 仍为占位（调用会报错），OpenAI / Qwen3-VL / Grok 已通过 OpenAI 兼容层实现。
+- API Key 按提供方分别存入 OS keyring（Windows 凭据管理器），不在配置文件中落盘。
 - 截图捕获当前光标所在显示器（多屏环境以光标为准）。
 - OCR 模式 B 依赖系统已安装的语言包。
 
@@ -127,13 +128,22 @@ pnpm tauri build    # 生产构建
 |------|------|------|
 | 1 | 脚手架 + 划词翻译 + 主窗双栏 + 托盘 + DeepSeek | ✅ |
 | 2 | 截图框选 + OCR 模式 A/B + 分屏展示窗 + 多模型协作 + 快捷键录制 | ✅ |
-| 3 | Claude / Gemini / MiniMax 真实实现 + API Key OS keyring 加密 | ⏳ 部分（OpenAI 兼容 3 家已落地） |
+| 3 | 全部 7 家 Provider 真实实现 + API Key keyring 按提供方加密 | ✅ |
 | 4 | 开机自启 + NSIS 安装包 | ⏳ 待开始（基础托盘已有） |
 | 5 | 浏览器插件 + OCR 模式 C/D | ⏳ 待开始 |
 
 ---
 
 ## 更新日志
+
+### 0.3.0 · 2026-05-29 — Stage 3
+
+- **Claude 真实实现**：Anthropic Messages API，`x-api-key` + `anthropic-version` 头，SSE `content_block_delta` 流式，base64 `image` 内容块支持视觉。
+- **Gemini 真实实现**：`generateContent` / `streamGenerateContent` + `alt=sse`，`systemInstruction`，`inlineData` 视觉，key 走 `?key=` 查询参数。
+- **MiniMax 真实实现**：通过 OpenAI 兼容层接入，走 `/text/chatcompletion_v2` 路径。
+- **API Key 按提供方分别加密**：keyring 条目 `apikey.<provider>`（如 `apikey.deepseek`），切换提供方自动切换对应 Key；自动迁移旧版按角色存储的 keyring 条目。
+- **设置交互优化**：API Key 输入框绑定当前提供方，预载所有提供方 Key 后即时切换。
+- 移除 `stubs.ts`（全部 7 家提供方已实现）。
 
 ### 0.2.0 · 2026-05-29 — Stage 2
 

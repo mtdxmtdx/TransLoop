@@ -86,7 +86,7 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     defaultBaseUrl: "https://api.anthropic.com/v1",
     defaultModel: "claude-sonnet-4-6",
     supportVision: true,
-    implemented: false,
+    implemented: true,
   },
   {
     id: "gemini",
@@ -94,7 +94,7 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
     defaultModel: "gemini-2.0-flash",
     supportVision: true,
-    implemented: false,
+    implemented: true,
   },
   {
     id: "qwen",
@@ -118,6 +118,6 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     defaultBaseUrl: "https://api.minimax.chat/v1",
     defaultModel: "abab6.5s-chat",
     supportVision: false,
-    implemented: false,
+    implemented: true,
   },
 ];
