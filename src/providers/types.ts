@@ -3,6 +3,14 @@ export interface TranslateResult {
   detectedSourceLang?: string;
 }
 
+/** OCR 模式 A 的结果：多模态模型一步返回识别原文 + 译文。 */
+export interface VisionResult {
+  /** 模型从图片中识别出的原文（可能为空，取决于模型）。 */
+  original: string;
+  /** 译文。 */
+  translation: string;
+}
+
 export interface ProviderConfig {
   apiKey: string;
   baseUrl?: string;
@@ -21,7 +29,20 @@ export interface TranslationProvider {
     to: string,
     onChunk?: StreamHandler,
   ): Promise<string>;
-  translateImage?(base64: string, prompt: string): Promise<TranslateResult>;
+  /**
+   * OCR 模式 A：把整张图片交给多模态模型，一步完成识别 + 翻译。
+   * `imageDataUrl` 形如 `data:image/png;base64,...`。
+   */
+  translateImage?(
+    imageDataUrl: string,
+    from: string,
+    to: string,
+  ): Promise<VisionResult>;
+  /**
+   * 多模型协作：仅用多模态模型识别图片中的文字（不翻译），返回纯文本原文。
+   * 之后由另一个模型的 `translate()` 完成翻译。
+   */
+  recognizeImage?(imageDataUrl: string, from: string): Promise<string>;
 }
 
 export type ProviderName =
@@ -57,7 +78,7 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     defaultBaseUrl: "https://api.openai.com/v1",
     defaultModel: "gpt-4o-mini",
     supportVision: true,
-    implemented: false,
+    implemented: true,
   },
   {
     id: "claude",
@@ -77,19 +98,19 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
   },
   {
     id: "qwen",
-    label: "Qwen / Qwen-VL",
+    label: "Qwen3-VL (Flash)",
     defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    defaultModel: "qwen-plus",
+    defaultModel: "qwen3-vl-flash",
     supportVision: true,
-    implemented: false,
+    implemented: true,
   },
   {
     id: "grok",
     label: "xAI Grok",
     defaultBaseUrl: "https://api.x.ai/v1",
-    defaultModel: "grok-2-latest",
+    defaultModel: "grok-2-vision-latest",
     supportVision: true,
-    implemented: false,
+    implemented: true,
   },
   {
     id: "minimax",

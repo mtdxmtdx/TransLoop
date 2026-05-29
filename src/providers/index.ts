@@ -1,13 +1,19 @@
 import type { ProviderConfig, ProviderName, TranslationProvider } from "./types";
+import { PROVIDER_REGISTRY } from "./types";
 import { createDeepSeekProvider } from "./deepseek";
+import { createOpenAICompatProvider } from "./openai-compat";
 import {
   createClaudeProvider,
   createGeminiProvider,
-  createGrokProvider,
   createMiniMaxProvider,
-  createOpenAIProvider,
-  createQwenProvider,
 } from "./stubs";
+
+/** Look up registry metadata for default base URL / model / vision support. */
+function meta(name: ProviderName) {
+  const m = PROVIDER_REGISTRY.find((p) => p.id === name);
+  if (!m) throw new Error(`Unknown provider: ${name}`);
+  return m;
+}
 
 export function createProvider(
   name: ProviderName,
@@ -17,15 +23,20 @@ export function createProvider(
     case "deepseek":
       return createDeepSeekProvider(config);
     case "openai":
-      return createOpenAIProvider(config);
+    case "qwen":
+    case "grok": {
+      const m = meta(name);
+      return createOpenAICompatProvider(config, {
+        name,
+        defaultBaseUrl: m.defaultBaseUrl,
+        defaultModel: m.defaultModel,
+        supportVision: m.supportVision,
+      });
+    }
     case "claude":
       return createClaudeProvider(config);
     case "gemini":
       return createGeminiProvider(config);
-    case "qwen":
-      return createQwenProvider(config);
-    case "grok":
-      return createGrokProvider(config);
     case "minimax":
       return createMiniMaxProvider(config);
     default: {

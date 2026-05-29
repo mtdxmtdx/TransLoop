@@ -4,6 +4,7 @@ use tauri_plugin_global_shortcut::{
     Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState,
 };
 
+use crate::capture::begin_capture;
 use crate::popup::show_popup_at_cursor;
 use crate::selection::capture_selection;
 
@@ -103,23 +104,61 @@ fn on_triggered(app: &AppHandle) {
     });
 }
 
-pub fn register(app: &AppHandle, hotkey: &str) -> Result<()> {
-    let shortcut = parse_shortcut(hotkey)?;
+fn on_capture_triggered(app: &AppHandle) {
+    if let Err(e) = begin_capture(app) {
+        log::error!("begin capture failed: {e:?}");
+    }
+}
+
+/// Register both the selection-translate hotkey and the screenshot hotkey.
+/// Either may be empty/invalid; we register whichever parse successfully and
+/// return the first error so the caller can fall back / log.
+pub fn register(app: &AppHandle, translate_hotkey: &str, capture_hotkey: &str) -> Result<()> {
     let manager = app.global_shortcut();
     let _ = manager.unregister_all();
 
+    let mut first_err: Option<anyhow::Error> = None;
+
+    if let Err(e) = bind(app, translate_hotkey, Action::Translate) {
+        log::error!("注册划词快捷键 '{translate_hotkey}' 失败: {e:?}");
+        first_err.get_or_insert(e);
+    }
+    if !capture_hotkey.trim().is_empty() {
+        if let Err(e) = bind(app, capture_hotkey, Action::Capture) {
+            log::error!("注册截图快捷键 '{capture_hotkey}' 失败: {e:?}");
+            first_err.get_or_insert(e);
+        }
+    }
+
+    match first_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Action {
+    Translate,
+    Capture,
+}
+
+fn bind(app: &AppHandle, hotkey: &str, action: Action) -> Result<()> {
+    let shortcut = parse_shortcut(hotkey)?;
     let app_handle = app.clone();
-    manager
+    app.global_shortcut()
         .on_shortcut(shortcut, move |_app, _sc, event: ShortcutEvent| {
             if event.state() == ShortcutState::Pressed {
-                on_triggered(&app_handle);
+                match action {
+                    Action::Translate => on_triggered(&app_handle),
+                    Action::Capture => on_capture_triggered(&app_handle),
+                }
             }
         })
         .map_err(|e| anyhow!("注册快捷键失败: {e}"))?;
     Ok(())
 }
 
-pub fn reregister(app: &AppHandle, hotkey: &str) -> Result<()> {
+pub fn reregister(app: &AppHandle, translate_hotkey: &str, capture_hotkey: &str) -> Result<()> {
     let _ = app.global_shortcut().unregister_all();
-    register(app, hotkey)
+    register(app, translate_hotkey, capture_hotkey)
 }

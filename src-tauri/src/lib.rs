@@ -1,7 +1,10 @@
+mod capture;
+mod ocr;
 mod popup;
 mod selection;
 mod shortcut;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::Value;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -13,18 +16,27 @@ use tauri_plugin_store::StoreExt;
 const STORE_FILE: &str = "settings.json";
 const SETTINGS_KEY: &str = "settings";
 const DEFAULT_HOTKEY: &str = "Alt+Q";
+const DEFAULT_CAPTURE_HOTKEY: &str = "Alt+S";
 
-fn read_hotkey(app: &AppHandle) -> String {
+fn read_setting_string(app: &AppHandle, key: &str, default: &str) -> String {
     if let Ok(store) = app.store(STORE_FILE) {
         if let Some(Value::Object(map)) = store.get(SETTINGS_KEY) {
-            if let Some(Value::String(s)) = map.get("hotkey") {
+            if let Some(Value::String(s)) = map.get(key) {
                 if !s.trim().is_empty() {
                     return s.clone();
                 }
             }
         }
     }
-    DEFAULT_HOTKEY.to_string()
+    default.to_string()
+}
+
+fn read_hotkey(app: &AppHandle) -> String {
+    read_setting_string(app, "hotkey", DEFAULT_HOTKEY)
+}
+
+fn read_capture_hotkey(app: &AppHandle) -> String {
+    read_setting_string(app, "captureHotkey", DEFAULT_CAPTURE_HOTKEY)
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -36,8 +48,21 @@ fn show_main_window(app: &AppHandle) {
 }
 
 #[tauri::command]
-async fn update_hotkey(app: AppHandle, hotkey: String) -> Result<(), String> {
-    shortcut::reregister(&app, &hotkey).map_err(|e| e.to_string())
+async fn reload_shortcuts(app: AppHandle) -> Result<(), String> {
+    let translate = read_hotkey(&app);
+    let capture = read_capture_hotkey(&app);
+    shortcut::reregister(&app, &translate, &capture).map_err(|e| e.to_string())
+}
+
+/// Temporarily unregister all global shortcuts so they don't fire while the
+/// user is recording a new combination in the settings UI. Restored by a
+/// subsequent `reload_shortcuts` call.
+#[tauri::command]
+async fn suspend_shortcuts(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    app.global_shortcut()
+        .unregister_all()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -49,6 +74,44 @@ async fn hide_popup(app: AppHandle) -> Result<(), String> {
 async fn show_main(app: AppHandle) -> Result<(), String> {
     show_main_window(&app);
     Ok(())
+}
+
+#[tauri::command]
+async fn start_capture(app: AppHandle) -> Result<(), String> {
+    capture::begin_capture(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn finish_capture(app: AppHandle, data_url: String) -> Result<(), String> {
+    capture::finish_capture(&app, data_url).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cancel_capture(app: AppHandle) -> Result<(), String> {
+    capture::cancel_capture(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn hide_capture(app: AppHandle) -> Result<(), String> {
+    capture::hide_capture(&app).map_err(|e| e.to_string())
+}
+
+/// OCR mode B: run Windows OCR on a base64 image (data URL or bare base64).
+/// Returns the recognised text. `lang` is an optional BCP-47 tag.
+#[tauri::command]
+async fn ocr_windows(image: String, lang: Option<String>) -> Result<String, String> {
+    let b64 = image
+        .rsplit_once(',')
+        .map(|(_, rest)| rest)
+        .unwrap_or(&image);
+    let bytes = STANDARD
+        .decode(b64.trim())
+        .map_err(|e| format!("图片解码失败: {e}"))?;
+    let lang = lang.filter(|s| !s.trim().is_empty());
+    tauri::async_runtime::spawn_blocking(move || ocr::recognize(&bytes, lang.as_deref()))
+        .await
+        .map_err(|e| format!("OCR 线程错误: {e}"))?
+        .map_err(|e| e.to_string())
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -90,17 +153,19 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_http::init())
         .setup(|app| {
-            if let Some(win) = app.get_webview_window("popup") {
-                let _ = win.hide();
+            for label in ["popup", "overlay", "capture"] {
+                if let Some(win) = app.get_webview_window(label) {
+                    let _ = win.hide();
+                }
             }
 
             let handle = app.handle().clone();
             let hotkey = read_hotkey(&handle);
-            if let Err(e) = shortcut::register(&handle, &hotkey) {
-                log::error!("register shortcut '{hotkey}' failed: {e:?}");
-                if hotkey != DEFAULT_HOTKEY {
-                    let _ = shortcut::register(&handle, DEFAULT_HOTKEY);
-                }
+            let capture_hotkey = read_capture_hotkey(&handle);
+            if let Err(e) = shortcut::register(&handle, &hotkey, &capture_hotkey) {
+                log::error!("register shortcuts failed: {e:?}");
+                // Fall back to defaults if the user-configured combo failed.
+                let _ = shortcut::register(&handle, DEFAULT_HOTKEY, DEFAULT_CAPTURE_HOTKEY);
             }
 
             if let Err(e) = build_tray(&handle) {
@@ -109,14 +174,29 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == "main" {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window.hide();
+            // main hides to tray; overlay/capture hide on close so they can be
+            // reused for the next screenshot.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                match window.label() {
+                    "main" | "overlay" | "capture" => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                    _ => {}
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![update_hotkey, hide_popup, show_main])
+        .invoke_handler(tauri::generate_handler![
+            reload_shortcuts,
+            suspend_shortcuts,
+            hide_popup,
+            show_main,
+            start_capture,
+            finish_capture,
+            cancel_capture,
+            hide_capture,
+            ocr_windows
+        ])
         .run(tauri::generate_context!())
         .expect("error while running TransLoop");
 }

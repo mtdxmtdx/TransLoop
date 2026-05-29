@@ -7,3 +7,6 @@ dist-ssr
 # Rust / Tauri
 src-tauri/target
 src-tauri/gen
+
+# Assets (kept locally only)
+ChatGPT Image *.png

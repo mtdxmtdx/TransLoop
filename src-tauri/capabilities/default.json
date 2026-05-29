@@ -2,14 +2,16 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capabilities for TransLoop desktop windows",
-  "windows": ["main", "popup"],
+  "windows": ["main", "popup", "overlay", "capture"],
   "permissions": [
     "core:default",
     "core:window:default",
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-position",
+    "core:window:allow-set-size",
     "core:window:allow-set-focus",
+    "core:window:allow-set-always-on-top",
     "core:window:allow-close",
     "core:window:allow-start-dragging",
     "core:window:allow-start-resize-dragging",
@@ -29,6 +31,7 @@
         { "url": "https://api.anthropic.com/*" },
         { "url": "https://generativelanguage.googleapis.com/*" },
         { "url": "https://dashscope.aliyuncs.com/*" },
+        { "url": "https://dashscope-intl.aliyuncs.com/*" },
         { "url": "https://api.x.ai/*" },
         { "url": "https://api.minimax.chat/*" }
       ]

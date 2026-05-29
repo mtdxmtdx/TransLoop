@@ -57,6 +57,8 @@ export default defineConfig(function () { return __awaiter(void 0, void 0, void 
                         input: {
                             main: resolve(__dirname, "index.html"),
                             popup: resolve(__dirname, "popup.html"),
+                            overlay: resolve(__dirname, "overlay.html"),
+                            capture: resolve(__dirname, "capture.html"),
                         },
                     },
                 },

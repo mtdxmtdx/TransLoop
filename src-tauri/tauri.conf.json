@@ -39,6 +39,38 @@
         "visible": false,
         "focus": false,
         "shadow": false
+      },
+      {
+        "label": "overlay",
+        "title": "TransLoop Overlay",
+        "url": "overlay.html",
+        "width": 800,
+        "height": 600,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "visible": false,
+        "focus": true,
+        "shadow": false
+      },
+      {
+        "label": "capture",
+        "title": "TransLoop · 截图翻译",
+        "url": "capture.html",
+        "width": 520,
+        "height": 460,
+        "minWidth": 360,
+        "minHeight": 300,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": true,
+        "visible": false,
+        "focus": true,
+        "shadow": false
       }
     ],
     "security": {
