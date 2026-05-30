@@ -7,10 +7,11 @@ mod shortcut;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::Value;
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, WindowEvent,
 };
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_store::StoreExt;
 
 const STORE_FILE: &str = "settings.json";
@@ -158,18 +159,69 @@ async fn delete_secret(key: String) -> Result<(), String> {
     }
 }
 
+// ---- 开机自启动 ----
+
+#[tauri::command]
+async fn get_autostart_status(app: AppHandle) -> Result<bool, String> {
+    let autostart = app.autolaunch();
+    autostart.is_enabled().map_err(|e| format!("获取自启动状态失败: {e}"))
+}
+
+#[tauri::command]
+async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let autostart = app.autolaunch();
+    if enabled {
+        autostart.enable().map_err(|e| format!("启用自启动失败: {e}"))
+    } else {
+        autostart.disable().map_err(|e| format!("禁用自启动失败: {e}"))
+    }
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出 TransLoop", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+    // 用 CheckMenuItem 展示自启动状态，切换时只更新勾选态，不重建托盘。
+    let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
+    let autostart_item = CheckMenuItem::with_id(
+        app,
+        "autostart",
+        "开机自启动",
+        true,
+        autostart_enabled,
+        None::<&str>,
+    )?;
+    // 克隆一个句柄进闭包，供菜单事件回写勾选态。
+    let autostart_handle = autostart_item.clone();
+
+    let menu = Menu::with_items(app, &[&show_item, &autostart_item, &quit_item])?;
 
     TrayIconBuilder::with_id("main-tray")
         .icon(app.default_window_icon().cloned().unwrap())
         .tooltip("TransLoop · 翻译")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
+        .on_menu_event(move |app, event| match event.id().as_ref() {
             "show" => show_main_window(app),
+            "autostart" => {
+                let autostart = app.autolaunch();
+                let current = autostart.is_enabled().unwrap_or(false);
+                let result = if current {
+                    autostart.disable()
+                } else {
+                    autostart.enable()
+                };
+                match result {
+                    Ok(()) => {
+                        let _ = autostart_handle.set_checked(!current);
+                    }
+                    Err(e) => {
+                        log::error!("切换自启动失败: {e}");
+                        // 失败时把勾选态校正回真实状态。
+                        let _ = autostart_handle.set_checked(autostart.is_enabled().unwrap_or(false));
+                    }
+                }
+            }
             "quit" => {
                 app.exit(0);
             }
@@ -196,9 +248,21 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
         .setup(|app| {
             for label in ["popup", "overlay", "capture"] {
                 if let Some(win) = app.get_webview_window(label) {
+                    let _ = win.hide();
+                }
+            }
+
+            // 开机自启动时带 --minimized 参数：静默到托盘，不弹主窗口。
+            let launched_minimized = std::env::args().any(|a| a == "--minimized");
+            if launched_minimized {
+                if let Some(win) = app.get_webview_window("main") {
                     let _ = win.hide();
                 }
             }
@@ -242,7 +306,9 @@ pub fn run() {
             ocr_windows,
             set_secret,
             get_secret,
-            delete_secret
+            delete_secret,
+            get_autostart_status,
+            set_autostart
         ])
         .run(tauri::generate_context!())
         .expect("error while running TransLoop");

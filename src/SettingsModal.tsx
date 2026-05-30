@@ -29,11 +29,16 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
     kind: "idle",
     text: "",
   });
+  const [autostart, setAutostart] = useState<boolean>(false);
 
   useEffect(() => {
     if (!open) return;
     setDraft(initial);
     setStatus({ kind: "idle", text: "" });
+    // 加载开机自启动状态
+    invoke<boolean>("get_autostart_status")
+      .then(setAutostart)
+      .catch(() => setAutostart(false));
     // 预载所有提供方的 key，切换时无需等待、不闪烁。
     let cancelled = false;
     Promise.all(
@@ -351,6 +356,30 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
             </label>
             <span className="hint">
               启用后译文会逐字显示；关闭后等待完整结果再一次性展示。
+            </span>
+          </div>
+
+          <div className="field">
+            <label className="toggle-row">
+              <span>开机自启动</span>
+              <input
+                type="checkbox"
+                checked={autostart}
+                onChange={async (e) => {
+                  const enabled = e.target.checked;
+                  setAutostart(enabled);
+                  try {
+                    await invoke("set_autostart", { enabled });
+                  } catch (err) {
+                    console.error("Failed to set autostart:", err);
+                    setAutostart(!enabled);
+                  }
+                }}
+              />
+              <span className="toggle" />
+            </label>
+            <span className="hint">
+              启用后 TransLoop 会在系统启动时自动运行，可在托盘菜单中快速切换。
             </span>
           </div>
         </div>
