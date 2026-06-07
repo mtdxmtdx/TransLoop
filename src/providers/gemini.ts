@@ -5,7 +5,12 @@ import type {
   TranslationProvider,
   VisionResult,
 } from "./types";
-import { describeLang, parseVisionContent } from "./openai-compat";
+import {
+  buildTranslateSystemPrompt,
+  buildVisionRecognizeSystemPrompt,
+  buildVisionTranslateSystemPrompt,
+} from "./types";
+import { parseVisionContent } from "./openai-compat";
 import { consumeSSE, splitDataUrl } from "./sse";
 
 interface GeminiResponse {
@@ -53,13 +58,7 @@ export function createGeminiProvider(cfg: ProviderConfig): TranslationProvider {
     async translate(text, from, to, onChunk?: StreamHandler) {
       const body = {
         systemInstruction: {
-          parts: [
-            {
-              text:
-                `You are a professional translator. Translate the user's text from ${describeLang(from)} to ${describeLang(to)}. ` +
-                "Output ONLY the translation, without quotes, explanations, or the original text.",
-            },
-          ],
+          parts: [{ text: buildTranslateSystemPrompt(from, to) }],
         },
         contents: [{ role: "user", parts: [{ text }] }],
         generationConfig: { temperature: 0.3 },
@@ -93,18 +92,9 @@ export function createGeminiProvider(cfg: ProviderConfig): TranslationProvider {
 
     async translateImage(imageDataUrl, from, to): Promise<VisionResult> {
       const { mediaType, base64 } = splitDataUrl(imageDataUrl);
-      const fromDesc = from === "auto" ? "the language in the image" : describeLang(from);
       const body = {
         systemInstruction: {
-          parts: [
-            {
-              text:
-                "You are an OCR + translation engine. Read ALL text in the image, " +
-                `translate it from ${fromDesc} to ${describeLang(to)}. ` +
-                'Respond with ONLY a JSON object: {"original": "<text in the image>", "translation": "<translated text>"}. ' +
-                "Preserve line breaks inside the string values. No markdown, no extra keys.",
-            },
-          ],
+          parts: [{ text: buildVisionTranslateSystemPrompt(from, to) }],
         },
         contents: [
           {
@@ -129,16 +119,9 @@ export function createGeminiProvider(cfg: ProviderConfig): TranslationProvider {
 
     async recognizeImage(imageDataUrl, from): Promise<string> {
       const { mediaType, base64 } = splitDataUrl(imageDataUrl);
-      const fromDesc = from === "auto" ? "the language in the image" : describeLang(from);
       const body = {
         systemInstruction: {
-          parts: [
-            {
-              text:
-                `You are an OCR engine. Transcribe ALL text in the image exactly as it appears (${fromDesc}). ` +
-                "Output ONLY the transcribed text, preserving line breaks. Do not translate, explain, or add anything.",
-            },
-          ],
+          parts: [{ text: buildVisionRecognizeSystemPrompt(from) }],
         },
         contents: [
           {

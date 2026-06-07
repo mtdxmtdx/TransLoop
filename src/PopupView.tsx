@@ -40,6 +40,10 @@ const RESIZE_EDGES: Array<{ cls: string; dir: ResizeDirection }> = [
 export function Popup() {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const requestIdRef = useRef(0);
+  // 原文区域高度（像素），可通过拖动中间分隔条调整
+  const [sourceHeight, setSourceHeight] = useState(80);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const dividerDragRef = useRef<{ startY: number; startH: number } | null>(null);
 
   async function runTranslate(payload: PopupPayload) {
     const id = payload.requestId;
@@ -115,6 +119,35 @@ export function Popup() {
     getCurrentWindow().startResizeDragging(dir).catch(() => {});
   }
 
+  // 拖动中间分隔条：向上拖增大原文区，向下拖缩小
+  function handleDividerPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dividerDragRef.current = { startY: e.clientY, startH: sourceHeight };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function handleDividerPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = dividerDragRef.current;
+    if (!drag) return;
+    const delta = drag.startY - e.clientY; // 向上为正
+    const contentH = contentRef.current?.clientHeight ?? 0;
+    // 给译文区域留出至少 48px，原文区域最小 32px
+    const maxH = Math.max(32, contentH - 48);
+    const next = Math.min(maxH, Math.max(32, drag.startH + delta));
+    setSourceHeight(next);
+  }
+
+  function handleDividerPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    dividerDragRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <div className="popup">
       <div className="header" onPointerDown={handleHeaderPointerDown}>
@@ -128,7 +161,7 @@ export function Popup() {
           ×
         </button>
       </div>
-      <div className="content">
+      <div className="content" ref={contentRef}>
         {state.kind === "idle" && (
           <div className="body" style={{ opacity: 0.6 }}>
             等待选中文字…
@@ -142,19 +175,46 @@ export function Popup() {
               <span className="loading-dot" />
               <span className="loading-dot" />
             </div>
-            <div className="source">{state.source}</div>
+            <div
+              className="divider"
+              onPointerDown={handleDividerPointerDown}
+              onPointerMove={handleDividerPointerMove}
+              onPointerUp={handleDividerPointerUp}
+              title="拖动调整原文显示区域"
+            />
+            <div className="source" style={{ height: sourceHeight }}>
+              {state.source}
+            </div>
           </>
         )}
         {state.kind === "result" && (
           <>
             <div className="body">{state.translation}</div>
-            <div className="source">{state.source}</div>
+            <div
+              className="divider"
+              onPointerDown={handleDividerPointerDown}
+              onPointerMove={handleDividerPointerMove}
+              onPointerUp={handleDividerPointerUp}
+              title="拖动调整原文显示区域"
+            />
+            <div className="source" style={{ height: sourceHeight }}>
+              {state.source}
+            </div>
           </>
         )}
         {state.kind === "error" && (
           <>
             <div className="body error">{state.message}</div>
-            <div className="source">{state.source}</div>
+            <div
+              className="divider"
+              onPointerDown={handleDividerPointerDown}
+              onPointerMove={handleDividerPointerMove}
+              onPointerUp={handleDividerPointerUp}
+              title="拖动调整原文显示区域"
+            />
+            <div className="source" style={{ height: sourceHeight }}>
+              {state.source}
+            </div>
           </>
         )}
       </div>

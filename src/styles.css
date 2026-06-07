@@ -589,12 +589,36 @@ body.popup-body {
   line-height: 1.55;
 }
 
+.popup .divider {
+  flex-shrink: 0;
+  height: 7px;
+  margin: 1px 0;
+  cursor: ns-resize;
+  position: relative;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.popup .divider::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  transition: background 0.15s;
+}
+
+.popup .divider:hover::after {
+  background: rgba(255, 255, 255, 0.4);
+}
+
 .popup .source {
   font-size: 12px;
   opacity: 0.55;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  padding-top: 6px;
-  max-height: 80px;
+  padding-top: 4px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;

@@ -1,22 +1,6 @@
 import { fetch } from "@tauri-apps/plugin-http";
 import type { ProviderConfig, StreamHandler, TranslationProvider } from "./types";
-
-const LANG_NAME: Record<string, string> = {
-  auto: "the source language (auto-detect)",
-  zh: "Chinese (Simplified)",
-  "zh-TW": "Chinese (Traditional)",
-  en: "English",
-  ja: "Japanese",
-  ko: "Korean",
-  fr: "French",
-  de: "German",
-  es: "Spanish",
-  ru: "Russian",
-};
-
-function describe(code: string): string {
-  return LANG_NAME[code] ?? code;
-}
+import { buildTranslateSystemPrompt } from "./types";
 
 export function createDeepSeekProvider(cfg: ProviderConfig): TranslationProvider {
   const baseUrl = (cfg.baseUrl || "https://api.deepseek.com").replace(/\/$/, "");
@@ -38,9 +22,7 @@ export function createDeepSeekProvider(cfg: ProviderConfig): TranslationProvider
         messages: [
           {
             role: "system",
-            content:
-              `You are a professional translator. Translate the user's text from ${describe(from)} to ${describe(to)}. ` +
-              `Output ONLY the translation, without quotes, explanations, or the original text.`,
+            content: buildTranslateSystemPrompt(from, to),
           },
           { role: "user", content: text },
         ],

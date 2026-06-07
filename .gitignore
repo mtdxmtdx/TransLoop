@@ -10,3 +10,10 @@ src-tauri/gen
 
 # Assets (kept locally only)
 ChatGPT Image *.png
+
+# Built binaries (dev artifacts)
+transloop.exe
+uninstall.exe
+
+# Copyright registration docs (generated, large)
+scripts/

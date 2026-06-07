@@ -5,23 +5,15 @@ import type {
   TranslationProvider,
   VisionResult,
 } from "./types";
+import {
+  buildTranslateSystemPrompt,
+  buildVisionRecognizeSystemPrompt,
+  buildVisionTranslateSystemPrompt,
+  describeLang,
+} from "./types";
 
-const LANG_NAME: Record<string, string> = {
-  auto: "the source language (auto-detect)",
-  zh: "Chinese (Simplified)",
-  "zh-TW": "Chinese (Traditional)",
-  en: "English",
-  ja: "Japanese",
-  ko: "Korean",
-  fr: "French",
-  de: "German",
-  es: "Spanish",
-  ru: "Russian",
-};
-
-export function describeLang(code: string): string {
-  return LANG_NAME[code] ?? code;
-}
+// 从 types 统一来源 re-export，保持 claude.ts / gemini.ts 现有导入路径不变。
+export { describeLang };
 
 interface CompatOptions {
   /** Provider id, e.g. "openai". */
@@ -74,9 +66,7 @@ export function createOpenAICompatProvider(
         messages: [
           {
             role: "system",
-            content:
-              `You are a professional translator. Translate the user's text from ${describeLang(from)} to ${describeLang(to)}. ` +
-              `Output ONLY the translation, without quotes, explanations, or the original text.`,
+            content: buildTranslateSystemPrompt(from, to),
           },
           { role: "user", content: text },
         ],
@@ -108,8 +98,6 @@ export function createOpenAICompatProvider(
       from,
       to,
     ): Promise<VisionResult> => {
-      const fromDesc =
-        from === "auto" ? "the language in the image" : describeLang(from);
       const body = {
         model,
         temperature: 0.2,
@@ -118,11 +106,7 @@ export function createOpenAICompatProvider(
         messages: [
           {
             role: "system",
-            content:
-              "You are an OCR + translation engine. Read ALL text in the image, " +
-              `translate it from ${fromDesc} to ${describeLang(to)}. ` +
-              'Respond with ONLY a JSON object: {"original": "<text in the image>", "translation": "<translated text>"}. ' +
-              "Preserve line breaks inside the string values. No markdown, no extra keys.",
+            content: buildVisionTranslateSystemPrompt(from, to),
           },
           {
             role: "user",
@@ -156,17 +140,13 @@ export function createOpenAICompatProvider(
 
     // 多模型协作：仅识别原文（不翻译），交给另一个模型翻译。
     provider.recognizeImage = async (imageDataUrl, from): Promise<string> => {
-      const fromDesc =
-        from === "auto" ? "the language in the image" : describeLang(from);
       const body = {
         model,
         temperature: 0,
         messages: [
           {
             role: "system",
-            content:
-              `You are an OCR engine. Transcribe ALL text in the image exactly as it appears (${fromDesc}). ` +
-              "Output ONLY the transcribed text, preserving line breaks. Do not translate, explain, or add anything.",
+            content: buildVisionRecognizeSystemPrompt(from),
           },
           {
             role: "user",

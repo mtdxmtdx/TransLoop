@@ -5,7 +5,12 @@ import type {
   TranslationProvider,
   VisionResult,
 } from "./types";
-import { describeLang, parseVisionContent } from "./openai-compat";
+import {
+  buildTranslateSystemPrompt,
+  buildVisionRecognizeSystemPrompt,
+  buildVisionTranslateSystemPrompt,
+} from "./types";
+import { parseVisionContent } from "./openai-compat";
 import { consumeSSE, splitDataUrl } from "./sse";
 
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -56,9 +61,7 @@ export function createClaudeProvider(cfg: ProviderConfig): TranslationProvider {
         model,
         max_tokens: MAX_TOKENS,
         stream: true,
-        system:
-          `You are a professional translator. Translate the user's text from ${describeLang(from)} to ${describeLang(to)}. ` +
-          "Output ONLY the translation, without quotes, explanations, or the original text.",
+        system: buildTranslateSystemPrompt(from, to),
         messages: [{ role: "user", content: text }],
       };
       const res = await post(body);
@@ -87,15 +90,10 @@ export function createClaudeProvider(cfg: ProviderConfig): TranslationProvider {
 
     async translateImage(imageDataUrl, from, to): Promise<VisionResult> {
       const { mediaType, base64 } = splitDataUrl(imageDataUrl);
-      const fromDesc = from === "auto" ? "the language in the image" : describeLang(from);
       const body = {
         model,
         max_tokens: MAX_TOKENS,
-        system:
-          "You are an OCR + translation engine. Read ALL text in the image, " +
-          `translate it from ${fromDesc} to ${describeLang(to)}. ` +
-          'Respond with ONLY a JSON object: {"original": "<text in the image>", "translation": "<translated text>"}. ' +
-          "Preserve line breaks inside the string values. No markdown, no extra keys.",
+        system: buildVisionTranslateSystemPrompt(from, to),
         messages: [
           {
             role: "user",
@@ -116,13 +114,10 @@ export function createClaudeProvider(cfg: ProviderConfig): TranslationProvider {
 
     async recognizeImage(imageDataUrl, from): Promise<string> {
       const { mediaType, base64 } = splitDataUrl(imageDataUrl);
-      const fromDesc = from === "auto" ? "the language in the image" : describeLang(from);
       const body = {
         model,
         max_tokens: MAX_TOKENS,
-        system:
-          `You are an OCR engine. Transcribe ALL text in the image exactly as it appears (${fromDesc}). ` +
-          "Output ONLY the transcribed text, preserving line breaks. Do not translate, explain, or add anything.",
+        system: buildVisionRecognizeSystemPrompt(from),
         messages: [
           {
             role: "user",
