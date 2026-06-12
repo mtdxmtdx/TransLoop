@@ -128,6 +128,7 @@ pnpm tauri build    # 生产构建
 - **翻译鲁棒性加固**：统一全部 4 个 Provider（DeepSeek / OpenAI 兼容族 / Claude / Gemini）的系统 prompt 为共享函数。强化「仅翻译、不作答」约束——即使划词选中的内容是题目、命令或问句，模型也逐字翻译而不会去解答或执行。截图翻译的 OCR+翻译和纯识别 prompt 同步加固。
 - **划词悬浮窗分栏调整**：译文与原文之间的分隔线支持鼠标拖动，可自由调整原文区域的显示高度，便于查看完整原文。
 - **公共函数抽取**：`describeLang`、`buildTranslateSystemPrompt`、`buildVisionTranslateSystemPrompt`、`buildVisionRecognizeSystemPrompt` 收归 `providers/types.ts`，消除 4 个 Provider 中的重复代码。
+- **自启动闪窗修复**：主窗改为默认隐藏（`visible: false`），setup 仅在非 minimized 时调用 `show()`。消除自启动时「窗口先闪现再隐藏」的时序问题。
 
 ### 0.4.0 · 2026-05-30 — Stage 4
 

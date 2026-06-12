@@ -253,21 +253,14 @@ pub fn run() {
             Some(vec!["--minimized"]),
         ))
         .setup(|app| {
-            for label in ["popup", "overlay", "capture"] {
-                if let Some(win) = app.get_webview_window(label) {
-                    let _ = win.hide();
-                }
-            }
-
             // 开机自启动时带 --minimized 参数：静默到托盘，不弹主窗口。
+            // 主窗在 tauri.conf.json 中默认 visible: false，避免先显示再隐藏的闪窗。
             let launched_minimized = std::env::args().any(|a| a == "--minimized");
-            if launched_minimized {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.hide();
-                }
-            }
 
             let handle = app.handle().clone();
+            if !launched_minimized {
+                show_main_window(&handle);
+            }
             let hotkey = read_hotkey(&handle);
             let capture_hotkey = read_capture_hotkey(&handle);
             if let Err(e) = shortcut::register(&handle, &hotkey, &capture_hotkey) {
