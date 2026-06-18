@@ -280,6 +280,7 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
                         type="text"
                         value={draft.recognizeModel}
                         onChange={(e) => update("recognizeModel", e.target.value)}
+                        placeholder={recognizeMeta?.defaultModel ?? "模型名称"}
                         spellCheck={false}
                       />
                     </div>
@@ -302,6 +303,9 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
                 </option>
               ))}
             </select>
+            <span className="hint">
+              选择服务商，下方 Model 填写该商提供的具体模型名（切换服务商会自动填入一个常用默认值，可改）。
+            </span>
             {providerMeta && !providerMeta.implemented && (
               <span className="hint" style={{ color: "#d44" }}>
                 该 Provider 暂未实现，调用会报错，请选择其他提供方。
@@ -339,8 +343,10 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
                 type="text"
                 value={draft.model}
                 onChange={(e) => update("model", e.target.value)}
+                placeholder={providerMeta?.defaultModel ?? "模型名称"}
                 spellCheck={false}
               />
+              <span className="hint">手动填写模型名，如 {providerMeta?.defaultModel ?? "对应服务商的模型 ID"}。</span>
             </div>
           </div>
 

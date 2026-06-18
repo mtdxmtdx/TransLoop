@@ -74,7 +74,7 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
   },
   {
     id: "openai",
-    label: "OpenAI (GPT-4o)",
+    label: "OpenAI",
     defaultBaseUrl: "https://api.openai.com/v1",
     defaultModel: "gpt-4o-mini",
     supportVision: true,
@@ -98,7 +98,7 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
   },
   {
     id: "qwen",
-    label: "Qwen3-VL (Flash)",
+    label: "通义千问 Qwen",
     defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     defaultModel: "qwen3-vl-flash",
     supportVision: true,
