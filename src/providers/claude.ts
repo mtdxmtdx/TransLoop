@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import {
   buildTranslateSystemPrompt,
+  buildTranslateUserMessage,
   buildVisionRecognizeSystemPrompt,
   buildVisionTranslateSystemPrompt,
 } from "./types";
@@ -62,7 +63,7 @@ export function createClaudeProvider(cfg: ProviderConfig): TranslationProvider {
         max_tokens: MAX_TOKENS,
         stream: true,
         system: buildTranslateSystemPrompt(from, to),
-        messages: [{ role: "user", content: text }],
+        messages: [{ role: "user", content: buildTranslateUserMessage(text) }],
       };
       const res = await post(body);
       if (!res.body) throw new Error("Claude 返回为空（无响应体）");

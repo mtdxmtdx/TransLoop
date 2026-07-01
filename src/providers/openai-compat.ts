@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import {
   buildTranslateSystemPrompt,
+  buildTranslateUserMessage,
   buildVisionRecognizeSystemPrompt,
   buildVisionTranslateSystemPrompt,
   describeLang,
@@ -68,7 +69,7 @@ export function createOpenAICompatProvider(
             role: "system",
             content: buildTranslateSystemPrompt(from, to),
           },
-          { role: "user", content: text },
+          { role: "user", content: buildTranslateUserMessage(text) },
         ],
       };
       const res = await fetch(chatUrl, {

@@ -22,6 +22,10 @@ export interface AppSettings {
   recognizeApiKey: string;
   recognizeBaseUrl: string;
   recognizeModel: string;
+  fallbackEnabled: boolean;
+  fallbackModels: string[];
+  fallbackProviderOrder: ProviderName[];
+  providerConfigs: Partial<Record<ProviderName, { baseUrl: string; model: string }>>;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -40,6 +44,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   recognizeApiKey: "",
   recognizeBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   recognizeModel: "qwen3-vl-flash",
+  fallbackEnabled: true,
+  fallbackModels: [],
+  fallbackProviderOrder: ["openai", "qwen", "claude", "gemini", "deepseek", "grok", "minimax"],
+  providerConfigs: {},
 };
 
 const STORE_FILE = "settings.json";
@@ -147,7 +155,20 @@ export async function loadSettings(): Promise<AppSettings> {
 
   await migrateLegacyKeys(store, saved);
 
-  const merged: AppSettings = { ...DEFAULT_SETTINGS, ...saved };
+  const merged: AppSettings = {
+    ...DEFAULT_SETTINGS,
+    ...saved,
+    fallbackModels: Array.isArray(saved.fallbackModels)
+      ? saved.fallbackModels
+      : DEFAULT_SETTINGS.fallbackModels,
+    fallbackProviderOrder: Array.isArray(saved.fallbackProviderOrder)
+      ? saved.fallbackProviderOrder
+      : DEFAULT_SETTINGS.fallbackProviderOrder,
+    providerConfigs: {
+      ...DEFAULT_SETTINGS.providerConfigs,
+      ...(saved.providerConfigs ?? {}),
+    },
+  };
   // 按当前选定的提供方解析出对应的 key 作为「当前生效值」。
   const [apiKey, recognizeApiKey] = await Promise.all([
     getProviderKey(merged.provider),
@@ -164,7 +185,18 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
     setProviderKey(settings.provider, settings.apiKey),
     setProviderKey(settings.recognizeProvider, settings.recognizeApiKey),
   ]);
-  const persisted: AppSettings = { ...settings, apiKey: "", recognizeApiKey: "" };
+  const persisted: AppSettings = {
+    ...settings,
+    providerConfigs: {
+      ...settings.providerConfigs,
+      [settings.provider]: {
+        baseUrl: settings.baseUrl,
+        model: settings.model,
+      },
+    },
+    apiKey: "",
+    recognizeApiKey: "",
+  };
   await store.set(SETTINGS_KEY, persisted);
   await store.save();
 }

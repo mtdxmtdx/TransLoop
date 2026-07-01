@@ -1,6 +1,6 @@
 import { fetch } from "@tauri-apps/plugin-http";
 import type { ProviderConfig, StreamHandler, TranslationProvider } from "./types";
-import { buildTranslateSystemPrompt } from "./types";
+import { buildTranslateSystemPrompt, buildTranslateUserMessage } from "./types";
 
 export function createDeepSeekProvider(cfg: ProviderConfig): TranslationProvider {
   const baseUrl = (cfg.baseUrl || "https://api.deepseek.com").replace(/\/$/, "");
@@ -24,7 +24,7 @@ export function createDeepSeekProvider(cfg: ProviderConfig): TranslationProvider
             role: "system",
             content: buildTranslateSystemPrompt(from, to),
           },
-          { role: "user", content: text },
+          { role: "user", content: buildTranslateUserMessage(text) },
         ],
       };
       const res = await fetch(`${baseUrl}/chat/completions`, {

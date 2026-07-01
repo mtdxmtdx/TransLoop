@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import {
   buildTranslateSystemPrompt,
+  buildTranslateUserMessage,
   buildVisionRecognizeSystemPrompt,
   buildVisionTranslateSystemPrompt,
 } from "./types";
@@ -60,7 +61,7 @@ export function createGeminiProvider(cfg: ProviderConfig): TranslationProvider {
         systemInstruction: {
           parts: [{ text: buildTranslateSystemPrompt(from, to) }],
         },
-        contents: [{ role: "user", parts: [{ text }] }],
+        contents: [{ role: "user", parts: [{ text: buildTranslateUserMessage(text) }] }],
         generationConfig: { temperature: 0.3 },
       };
       const res = await fetch(url("streamGenerateContent", "alt=sse"), {

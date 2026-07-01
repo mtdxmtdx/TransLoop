@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   DEFAULT_SETTINGS,
   loadSettings,
   saveSettings,
   type AppSettings,
 } from "./store";
-import { createProvider } from "./providers";
 import { SettingsModal } from "./SettingsModal";
 import { HistoryPanel } from "./HistoryPanel";
+import { UsagePanel } from "./UsagePanel";
+import { runTextTranslation } from "./translationRuntime";
 
 const LANG_OPTIONS = [
   { value: "auto", label: "自动检测" },
@@ -36,6 +37,7 @@ export function App() {
   const [loaded, setLoaded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showUsage, setShowUsage] = useState(false);
 
   const [input, setInput] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -52,14 +54,6 @@ export function App() {
       .catch(() => setLoaded(true));
   }, []);
 
-  const provider = useMemo(() => {
-    return createProvider(settings.provider, {
-      apiKey: settings.apiKey,
-      baseUrl: settings.baseUrl,
-      model: settings.model,
-    });
-  }, [settings.provider, settings.apiKey, settings.baseUrl, settings.model]);
-
   async function runTranslate(text: string, s: AppSettings) {
     const seq = ++requestSeqRef.current;
     setPhase({ kind: "loading" });
@@ -70,9 +64,13 @@ export function App() {
             setPhase({ kind: "ok", text: full });
           }
         : undefined;
-      const out = await provider.translate(text, s.fromLang, s.toLang, onChunk);
+      const out = await runTextTranslation(text, s.fromLang, s.toLang, {
+        settings: s,
+        entryKind: "main",
+        onChunk,
+      });
       if (requestSeqRef.current !== seq) return;
-      setPhase({ kind: "ok", text: out });
+      setPhase({ kind: "ok", text: out.text });
     } catch (e) {
       if (requestSeqRef.current !== seq) return;
       setPhase({
@@ -100,7 +98,7 @@ export function App() {
       if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, settings.fromLang, settings.toLang, settings.streamOutput, provider, loaded]);
+  }, [input, settings, loaded]);
 
   function handleSwap() {
     if (settings.fromLang === "auto") return;
@@ -221,6 +219,14 @@ export function App() {
         </button>
 
         <button
+          className="text-btn toolbar-btn"
+          onClick={() => setShowUsage(true)}
+          title="用量与请求日志"
+        >
+          用量
+        </button>
+
+        <button
           className="icon-btn"
           onClick={() => setShowSettings(true)}
           title="设置"
@@ -282,8 +288,10 @@ export function App() {
         onSaved={(next) => {
           setSettings(next);
         }}
+        onOpenUsage={() => setShowUsage(true)}
       />
       <HistoryPanel open={showHistory} onClose={() => setShowHistory(false)} />
+      <UsagePanel open={showUsage} onClose={() => setShowUsage(false)} />
     </div>
   );
 }

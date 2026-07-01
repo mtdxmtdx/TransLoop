@@ -3,8 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { loadSettings } from "./store";
-import { createProvider } from "./providers";
 import { addHistory } from "./history";
+import { runTextTranslation } from "./translationRuntime";
 
 type ResizeDirection =
   | "North"
@@ -54,22 +54,23 @@ export function Popup() {
     setState({ kind: "loading", source: payload.text });
     try {
       const settings = await loadSettings();
-      const provider = createProvider(settings.provider, {
-        apiKey: settings.apiKey,
-        baseUrl: settings.baseUrl,
-        model: settings.model,
-      });
-      const translation = await provider.translate(
+      const result = await runTextTranslation(
         payload.text,
         settings.fromLang,
         settings.toLang,
+        {
+          settings,
+          entryKind: "selection",
+          onChunk:
         (_delta, full) => {
           // 流式增量：仅当仍是当前请求时逐字更新结果
           if (requestIdRef.current !== id) return;
           setState({ kind: "result", source: payload.text, translation: full });
+          },
         },
       );
       if (requestIdRef.current !== id) return;
+      const translation = result.text;
       setState({ kind: "result", source: payload.text, translation });
       addHistory({
         kind: "selection",
@@ -77,8 +78,8 @@ export function Popup() {
         translation,
         fromLang: settings.fromLang,
         toLang: settings.toLang,
-        provider: settings.provider,
-        model: settings.model,
+        provider: result.provider,
+        model: result.model,
       }).catch(() => {});
     } catch (e) {
       if (requestIdRef.current !== id) return;

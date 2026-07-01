@@ -104,12 +104,15 @@ pnpm tauri build    # 生产构建
 
 `%APPDATA%\com.transloop.app\settings.json`（Windows）
 
-字段（不含密钥）：`hotkey`, `captureHotkey`, `provider`, `baseUrl`, `model`, `fromLang`, `toLang`, `streamOutput`, `ocrMode`, `visionCollab`, `recognizeProvider`, `recognizeBaseUrl`, `recognizeModel`。API Key 按提供方分开保存在 OS keyring 中（`apikey.<provider>`），不在 settings.json 里落盘。
+字段（不含密钥）：`hotkey`, `captureHotkey`, `provider`, `baseUrl`, `model`, `fromLang`, `toLang`, `streamOutput`, `ocrMode`, `visionCollab`, `recognizeProvider`, `recognizeBaseUrl`, `recognizeModel`, `fallbackEnabled`, `fallbackModels`, `fallbackProviderOrder`, `providerConfigs`。API Key 按提供方分开保存在 OS keyring 中（`apikey.<provider>`），不在 settings.json 里落盘。
+
+`%APPDATA%\com.transloop.app\usage.json` 保存 Provider 请求元数据和用量估算，默认保留最近 90 天 / 最多 5000 条记录；不保存原文、译文或截图内容。
 
 ## 已知约束
 
 - 划词依赖剪贴板：会临时覆盖后恢复用户原有内容。个别 UIPI 保护的窗口可能漏读。
 - API Key 按提供方分别存入 OS keyring（Windows 凭据管理器），不在配置文件中落盘。
+- 用量统计仅为本地估算，不等同于服务商账单。
 - 截图捕获当前光标所在显示器（多屏环境以光标为准）。
 - OCR 模式 B 依赖系统已安装的语言包。
 - OCR 模式 C 依赖本机已安装 Tesseract OCR，并且 `tesseract` 命令可在 PATH 中调用。
@@ -125,7 +128,7 @@ pnpm tauri build    # 生产构建
 | 3 | 全部 7 家 Provider 真实实现 + API Key keyring 按提供方加密 | ✅ |
 | 4 | 开机自启 + NSIS 安装包 | ✅ |
 | 5 | OCR 增强 + 翻译历史 | ✅ |
-| 6 | Provider 连通性测试 + 备用模型降级 + 用量统计 | ⏳ 规划中 |
+| 6 | Provider 连通性测试 + 备用模型降级 + 用量统计 | ✅ |
 | 7 | 划词悬浮窗增强 + 智能语言方向 + 翻译缓存 | ⏳ 规划中 |
 | 8 | 自动更新 + 首次启动引导 + 诊断日志 + 设置导入/导出 | ⏳ 规划中 |
 
@@ -143,6 +146,16 @@ pnpm tauri build    # 生产构建
 ---
 
 ## 更新日志
+
+### 0.6.0 · 2026-07-01 — Stage 6：Provider 可观测性与自动降级
+
+- **Provider 连通性测试**：设置页新增翻译 Provider / 识别 Provider 测试按钮，展示成功状态、耗时、模型和错误摘要。
+- **统一翻译运行时**：主窗口、划词悬浮窗、截图 OCR 后翻译统一走 runtime 层，集中处理超时、错误归类、用量记录和降级。
+- **自动降级**：支持启用 / 关闭自动降级；请求失败时先尝试当前 Provider 的备用模型，再按配置顺序尝试备用 Provider，缺少 API Key 的候选会跳过并记录。
+- **图片直传降级**：截图模式 A 的一步 OCR+翻译会在备用 Provider 支持图片输入时继续降级；OCR 后文本翻译同样复用统一降级链路。
+- **用量与请求日志**：新增本地 `usage.json`，记录 Provider、模型、入口、状态、耗时、字符数、估算 token、估算费用和错误摘要，不保存原文 / 译文 / 截图。
+- **用量面板**：主窗口和设置页新增「用量」入口，支持 7/30/90 天统计、Provider / 入口 / 状态筛选、清空记录和导出 CSV。
+- **提示词注入加固**：文本翻译请求统一用固定分隔符包裹原文，系统 prompt 明确只翻译分隔符内内容，降低选中文本中的注入指令影响。
 
 ### 0.5.0 · 2026-07-01 — Stage 5：OCR 增强与翻译历史
 

@@ -10,17 +10,19 @@ import {
 } from "./store";
 import { PROVIDER_REGISTRY, type ProviderName } from "./providers/types";
 import { HotkeyInput } from "./HotkeyInput";
+import { testProviderConnection, type ProviderAttempt } from "./translationRuntime";
 
 interface Props {
   open: boolean;
   initial: AppSettings;
   onClose: () => void;
   onSaved: (next: AppSettings) => void;
+  onOpenUsage?: () => void;
 }
 
 type StatusKind = "idle" | "saving" | "success" | "error";
 
-export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
+export function SettingsModal({ open, initial, onClose, onSaved, onOpenUsage }: Props) {
   const [draft, setDraft] = useState<AppSettings>(initial);
   // 按提供方缓存 API Key。输入框显示/编辑的是 keyMap[当前提供方]，
   // 因此切换提供方会自动切换到对应的 key，且各家分别保存。
@@ -30,11 +32,17 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
     text: "",
   });
   const [autostart, setAutostart] = useState<boolean>(false);
+  const [testStatus, setTestStatus] = useState<{
+    main?: ProviderAttempt;
+    recognize?: ProviderAttempt;
+    loading?: "main" | "recognize";
+  }>({});
 
   useEffect(() => {
     if (!open) return;
     setDraft(initial);
     setStatus({ kind: "idle", text: "" });
+    setTestStatus({});
     // 加载开机自启动状态
     invoke<boolean>("get_autostart_status")
       .then(setAutostart)
@@ -86,7 +94,19 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
   );
 
   function update<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
-    setDraft((prev) => ({ ...prev, [key]: value }));
+    setDraft((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === "baseUrl" || key === "model") {
+        next.providerConfigs = {
+          ...prev.providerConfigs,
+          [prev.provider]: {
+            baseUrl: key === "baseUrl" ? String(value) : prev.baseUrl,
+            model: key === "model" ? String(value) : prev.model,
+          },
+        };
+      }
+      return next;
+    });
     setStatus({ kind: "idle", text: "" });
   }
 
@@ -100,9 +120,13 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
     const meta = PROVIDER_REGISTRY.find((p) => p.id === next);
     setDraft((prev) => ({
       ...prev,
+      providerConfigs: {
+        ...prev.providerConfigs,
+        [prev.provider]: { baseUrl: prev.baseUrl, model: prev.model },
+      },
       provider: next,
-      baseUrl: meta?.defaultBaseUrl ?? prev.baseUrl,
-      model: meta?.defaultModel ?? prev.model,
+      baseUrl: prev.providerConfigs[next]?.baseUrl ?? meta?.defaultBaseUrl ?? prev.baseUrl,
+      model: prev.providerConfigs[next]?.model ?? meta?.defaultModel ?? prev.model,
     }));
     setStatus({ kind: "idle", text: "" });
     // 若该提供方的 key 尚未在缓存里，补取一次（预载兜底）。
@@ -157,6 +181,69 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
   function handleReset() {
     setDraft(DEFAULT_SETTINGS);
     setStatus({ kind: "idle", text: "" });
+  }
+
+  function settingsWithKeys(): AppSettings {
+    return {
+      ...draft,
+      apiKey: keyMap[draft.provider] ?? "",
+      recognizeApiKey: keyMap[draft.recognizeProvider] ?? "",
+    };
+  }
+
+  async function handleTestMain() {
+    const current = settingsWithKeys();
+    setTestStatus((prev) => ({ ...prev, loading: "main" }));
+    const attempt = await testProviderConnection({
+      provider: current.provider,
+      apiKey: current.apiKey,
+      baseUrl: current.baseUrl,
+      model: current.model,
+      fromLang: current.fromLang,
+      toLang: current.toLang,
+    });
+    setTestStatus((prev) => ({ ...prev, main: attempt, loading: undefined }));
+  }
+
+  async function handleTestRecognize() {
+    const current = settingsWithKeys();
+    setTestStatus((prev) => ({ ...prev, loading: "recognize" }));
+    const attempt = await testProviderConnection({
+      provider: current.recognizeProvider,
+      apiKey: current.recognizeApiKey,
+      baseUrl: current.recognizeBaseUrl,
+      model: current.recognizeModel,
+      fromLang: current.fromLang,
+      toLang: current.toLang,
+    });
+    setTestStatus((prev) => ({ ...prev, recognize: attempt, loading: undefined }));
+  }
+
+  function updateFallbackModels(value: string) {
+    update(
+      "fallbackModels",
+      value
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    );
+  }
+
+  function toggleFallbackProvider(provider: ProviderName, checked: boolean) {
+    const current = draft.fallbackProviderOrder.filter((item) => item !== provider);
+    update("fallbackProviderOrder", checked ? [...current, provider] : current);
+  }
+
+  function renderAttempt(attempt?: ProviderAttempt) {
+    if (!attempt) return null;
+    const ok = attempt.status === "success";
+    return (
+      <span className={`status ${ok ? "success" : "error"}`}>
+        {ok
+          ? `连接成功：${attempt.provider} / ${attempt.model}，${attempt.durationMs}ms`
+          : `连接失败：${attempt.errorSummary ?? attempt.errorKind ?? "未知错误"}`}
+      </span>
+    );
   }
 
   if (!open) return null;
@@ -292,6 +379,16 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
                       />
                     </div>
                   </div>
+                  <div className="field">
+                    <button
+                      className="ghost"
+                      onClick={handleTestRecognize}
+                      disabled={testStatus.loading === "recognize"}
+                    >
+                      {testStatus.loading === "recognize" ? "测试中..." : "测试识别 Provider"}
+                    </button>
+                    {renderAttempt(testStatus.recognize)}
+                  </div>
                 </div>
               )}
             </div>
@@ -358,6 +455,17 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
           </div>
 
           <div className="field">
+            <button
+              className="ghost"
+              onClick={handleTestMain}
+              disabled={testStatus.loading === "main"}
+            >
+              {testStatus.loading === "main" ? "测试中..." : "测试翻译 Provider"}
+            </button>
+            {renderAttempt(testStatus.main)}
+          </div>
+
+          <div className="field">
             <label className="toggle-row">
               <span>流式输出</span>
               <input
@@ -395,12 +503,52 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
               启用后 TransLoop 会在系统启动时自动运行，可在托盘菜单中快速切换。
             </span>
           </div>
+          <div className="field fallback-block">
+            <label className="toggle-row">
+              <span>启用自动降级</span>
+              <input
+                type="checkbox"
+                checked={draft.fallbackEnabled}
+                onChange={(e) => update("fallbackEnabled", e.target.checked)}
+              />
+              <span className="toggle" />
+            </label>
+            <span className="hint">
+              主模型失败时先尝试备用模型，再按下方顺序尝试备用 Provider；缺少 API Key 的候选会自动跳过。
+            </span>
+            <label>备用模型</label>
+            <textarea
+              className="settings-textarea"
+              value={draft.fallbackModels.join("\n")}
+              onChange={(e) => updateFallbackModels(e.target.value)}
+              placeholder="每行一个备用模型，例如 deepseek-chat"
+              spellCheck={false}
+            />
+            <label>备用 Provider 顺序</label>
+            <div className="provider-checks">
+              {PROVIDER_REGISTRY.filter((p) => p.implemented).map((p) => (
+                <label key={p.id} className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={draft.fallbackProviderOrder.includes(p.id)}
+                    onChange={(e) => toggleFallbackProvider(p.id, e.target.checked)}
+                  />
+                  <span>{p.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="modal-footer">
           <button className="ghost" onClick={handleReset}>
             恢复默认
           </button>
+          {onOpenUsage && (
+            <button className="ghost" onClick={onOpenUsage}>
+              用量
+            </button>
+          )}
           <div className="spacer" />
           {status.text && (
             <span

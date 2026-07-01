@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { loadSettings } from "./store";
 import { createProvider } from "./providers";
 import { addHistory } from "./history";
+import { runImageTranslation, runTextTranslation } from "./translationRuntime";
 
 interface CropPayload {
   dataUrl: string;
@@ -64,22 +65,23 @@ export function CaptureView() {
     seq: number,
     imagePreview?: string,
   ) {
-    const provider = createProvider(settings.provider, {
-      apiKey: settings.apiKey,
-      baseUrl: settings.baseUrl,
-      model: settings.model,
-    });
     setState({ kind: "running", stage: "翻译中…" });
-    const translation = await provider.translate(
+    const result = await runTextTranslation(
       text,
       settings.fromLang,
       settings.toLang,
-      (_d, full) => {
-        if (runSeq.current !== seq) return;
-        setState({ kind: "result", original: text, translation: full });
+      {
+        settings,
+        entryKind: "capture",
+        ocrMode: settings.ocrMode,
+        onChunk: (_d, full) => {
+          if (runSeq.current !== seq) return;
+          setState({ kind: "result", original: text, translation: full });
+        },
       },
     );
     if (runSeq.current !== seq) return;
+    const translation = result.text;
     setState({ kind: "result", original: text, translation });
     addHistory({
       kind: "capture",
@@ -87,8 +89,8 @@ export function CaptureView() {
       translation,
       fromLang: settings.fromLang,
       toLang: settings.toLang,
-      provider: settings.provider,
-      model: settings.model,
+      provider: result.provider,
+      model: result.model,
       ocrMode: settings.ocrMode,
       imagePreview,
     }).catch(() => {});
@@ -101,12 +103,6 @@ export function CaptureView() {
     try {
       const settings = await loadSettings();
       const imagePreview = await makeImagePreview(dataUrl);
-      const provider = createProvider(settings.provider, {
-        apiKey: settings.apiKey,
-        baseUrl: settings.baseUrl,
-        model: settings.model,
-      });
-
       if (settings.ocrMode === "A") {
         if (settings.visionCollab) {
           // 多模型协作：识别模型 OCR → 翻译提供方翻译。
@@ -134,15 +130,20 @@ export function CaptureView() {
           await translateRecognizedText(recognized, settings, seq, imagePreview);
         } else {
           // 单模型：一步识别 + 翻译。
-          if (!provider.translateImage) {
+          if (false) {
             throw new Error(
               "当前提供方不支持图片输入。请在设置中改用 OpenAI / Qwen-VL / Grok，或切换到 OCR 模式 B。",
             );
           }
-          const res = await provider.translateImage(
+          const res = await runImageTranslation(
             dataUrl,
             settings.fromLang,
             settings.toLang,
+            {
+              settings,
+              entryKind: "capture",
+              ocrMode: settings.ocrMode,
+            },
           );
           if (runSeq.current !== seq) return;
           setState({
@@ -156,8 +157,8 @@ export function CaptureView() {
             translation: res.translation,
             fromLang: settings.fromLang,
             toLang: settings.toLang,
-            provider: settings.provider,
-            model: settings.model,
+            provider: res.provider,
+            model: res.model,
             ocrMode: settings.ocrMode,
             imagePreview,
           }).catch(() => {});
