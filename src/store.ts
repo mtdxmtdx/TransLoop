@@ -2,8 +2,8 @@ import { load, type Store } from "@tauri-apps/plugin-store";
 import { invoke } from "@tauri-apps/api/core";
 import type { ProviderName } from "./providers/types";
 
-/** OCR 模式：A = 多模态模型一步识别+翻译；B = Windows 系统离线 OCR 后再翻译。 */
-export type OcrMode = "A" | "B";
+/** OCR 模式：A = 多模态模型；B = Windows 系统 OCR；C = Tesseract 本地 OCR。 */
+export type OcrMode = "A" | "B" | "C";
 
 export interface AppSettings {
   hotkey: string;

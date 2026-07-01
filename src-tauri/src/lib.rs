@@ -97,19 +97,34 @@ async fn hide_capture(app: AppHandle) -> Result<(), String> {
     capture::hide_capture(&app).map_err(|e| e.to_string())
 }
 
-/// OCR mode B: run Windows OCR on a base64 image (data URL or bare base64).
-/// Returns the recognised text. `lang` is an optional BCP-47 tag.
-#[tauri::command]
-async fn ocr_windows(image: String, lang: Option<String>) -> Result<String, String> {
+fn decode_image_data_url(image: &str) -> Result<Vec<u8>, String> {
     let b64 = image
         .rsplit_once(',')
         .map(|(_, rest)| rest)
-        .unwrap_or(&image);
-    let bytes = STANDARD
+        .unwrap_or(image);
+    STANDARD
         .decode(b64.trim())
-        .map_err(|e| format!("图片解码失败: {e}"))?;
+        .map_err(|e| format!("图片解码失败: {e}"))
+}
+
+/// OCR mode B: run Windows OCR on a base64 image (data URL or bare base64).
+/// Returns structured OCR text. `lang` is an optional BCP-47 tag.
+#[tauri::command]
+async fn ocr_windows(image: String, lang: Option<String>) -> Result<ocr::OcrResult, String> {
+    let bytes = decode_image_data_url(&image)?;
     let lang = lang.filter(|s| !s.trim().is_empty());
-    tauri::async_runtime::spawn_blocking(move || ocr::recognize(&bytes, lang.as_deref()))
+    tauri::async_runtime::spawn_blocking(move || ocr::recognize_windows(&bytes, lang.as_deref()))
+        .await
+        .map_err(|e| format!("OCR 线程错误: {e}"))?
+        .map_err(|e| e.to_string())
+}
+
+/// OCR mode C: run local Tesseract OCR on a base64 image.
+#[tauri::command]
+async fn ocr_tesseract(image: String, lang: Option<String>) -> Result<ocr::OcrResult, String> {
+    let bytes = decode_image_data_url(&image)?;
+    let lang = lang.filter(|s| !s.trim().is_empty());
+    tauri::async_runtime::spawn_blocking(move || ocr::recognize_tesseract(&bytes, lang.as_deref()))
         .await
         .map_err(|e| format!("OCR 线程错误: {e}"))?
         .map_err(|e| e.to_string())
@@ -164,16 +179,22 @@ async fn delete_secret(key: String) -> Result<(), String> {
 #[tauri::command]
 async fn get_autostart_status(app: AppHandle) -> Result<bool, String> {
     let autostart = app.autolaunch();
-    autostart.is_enabled().map_err(|e| format!("获取自启动状态失败: {e}"))
+    autostart
+        .is_enabled()
+        .map_err(|e| format!("获取自启动状态失败: {e}"))
 }
 
 #[tauri::command]
 async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     let autostart = app.autolaunch();
     if enabled {
-        autostart.enable().map_err(|e| format!("启用自启动失败: {e}"))
+        autostart
+            .enable()
+            .map_err(|e| format!("启用自启动失败: {e}"))
     } else {
-        autostart.disable().map_err(|e| format!("禁用自启动失败: {e}"))
+        autostart
+            .disable()
+            .map_err(|e| format!("禁用自启动失败: {e}"))
     }
 }
 
@@ -218,7 +239,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                     Err(e) => {
                         log::error!("切换自启动失败: {e}");
                         // 失败时把勾选态校正回真实状态。
-                        let _ = autostart_handle.set_checked(autostart.is_enabled().unwrap_or(false));
+                        let _ =
+                            autostart_handle.set_checked(autostart.is_enabled().unwrap_or(false));
                     }
                 }
             }
@@ -297,6 +319,7 @@ pub fn run() {
             cancel_capture,
             hide_capture,
             ocr_windows,
+            ocr_tesseract,
             set_secret,
             get_secret,
             delete_secret,

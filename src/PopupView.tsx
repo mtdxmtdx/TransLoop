@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { loadSettings } from "./store";
 import { createProvider } from "./providers";
+import { addHistory } from "./history";
 
 type ResizeDirection =
   | "North"
@@ -39,6 +40,7 @@ const RESIZE_EDGES: Array<{ cls: string; dir: ResizeDirection }> = [
 
 export function Popup() {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
+  const [draftSource, setDraftSource] = useState("");
   const requestIdRef = useRef(0);
   // 原文区域高度（像素），可通过拖动中间分隔条调整
   const [sourceHeight, setSourceHeight] = useState(80);
@@ -48,6 +50,7 @@ export function Popup() {
   async function runTranslate(payload: PopupPayload) {
     const id = payload.requestId;
     requestIdRef.current = id;
+    setDraftSource(payload.text);
     setState({ kind: "loading", source: payload.text });
     try {
       const settings = await loadSettings();
@@ -68,6 +71,15 @@ export function Popup() {
       );
       if (requestIdRef.current !== id) return;
       setState({ kind: "result", source: payload.text, translation });
+      addHistory({
+        kind: "selection",
+        original: payload.text,
+        translation,
+        fromLang: settings.fromLang,
+        toLang: settings.toLang,
+        provider: settings.provider,
+        model: settings.model,
+      }).catch(() => {});
     } catch (e) {
       if (requestIdRef.current !== id) return;
       setState({
@@ -148,6 +160,27 @@ export function Popup() {
     }
   }
 
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function retranslateDraftSource() {
+    if (state.kind === "idle") return;
+    const text = draftSource.trim();
+    if (!text) return;
+    await runTranslate({
+      text,
+      requestId: requestIdRef.current + 1,
+    });
+  }
+
+  const sourceText = state.kind === "idle" ? "" : draftSource;
+  const translationText = state.kind === "result" ? state.translation : "";
+
   return (
     <div className="popup">
       <div className="header" onPointerDown={handleHeaderPointerDown}>
@@ -162,6 +195,27 @@ export function Popup() {
         </button>
       </div>
       <div className="content" ref={contentRef}>
+        {state.kind !== "idle" && (
+          <div className="popup-actions">
+            <button className="text-btn" onClick={() => copyText(sourceText)}>
+              复制原文
+            </button>
+            <button
+              className="text-btn"
+              onClick={retranslateDraftSource}
+              disabled={!draftSource.trim() || state.kind === "loading"}
+            >
+              重新翻译
+            </button>
+            <button
+              className="text-btn"
+              onClick={() => copyText(translationText)}
+              disabled={!translationText}
+            >
+              复制译文
+            </button>
+          </div>
+        )}
         {state.kind === "idle" && (
           <div className="body" style={{ opacity: 0.6 }}>
             等待选中文字…
@@ -182,9 +236,14 @@ export function Popup() {
               onPointerUp={handleDividerPointerUp}
               title="拖动调整原文显示区域"
             />
-            <div className="source" style={{ height: sourceHeight }}>
-              {state.source}
-            </div>
+            <textarea
+              className="source source-editor"
+              style={{ height: sourceHeight }}
+              value={draftSource}
+              onChange={(e) => setDraftSource(e.target.value)}
+              spellCheck={false}
+              title="可编辑原文，修改后点击重新翻译"
+            />
           </>
         )}
         {state.kind === "result" && (
@@ -197,9 +256,14 @@ export function Popup() {
               onPointerUp={handleDividerPointerUp}
               title="拖动调整原文显示区域"
             />
-            <div className="source" style={{ height: sourceHeight }}>
-              {state.source}
-            </div>
+            <textarea
+              className="source source-editor"
+              style={{ height: sourceHeight }}
+              value={draftSource}
+              onChange={(e) => setDraftSource(e.target.value)}
+              spellCheck={false}
+              title="可编辑原文，修改后点击重新翻译"
+            />
           </>
         )}
         {state.kind === "error" && (
@@ -212,9 +276,14 @@ export function Popup() {
               onPointerUp={handleDividerPointerUp}
               title="拖动调整原文显示区域"
             />
-            <div className="source" style={{ height: sourceHeight }}>
-              {state.source}
-            </div>
+            <textarea
+              className="source source-editor"
+              style={{ height: sourceHeight }}
+              value={draftSource}
+              onChange={(e) => setDraftSource(e.target.value)}
+              spellCheck={false}
+              title="可编辑原文，修改后点击重新翻译"
+            />
           </>
         )}
       </div>

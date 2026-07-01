@@ -6,6 +6,13 @@
 //! must not happen on the async runtime's worker threads.
 
 use anyhow::{anyhow, Result};
+use serde::Serialize;
+use std::{
+    fs,
+    path::PathBuf,
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use windows::{
     Globalization::Language,
     Graphics::Imaging::BitmapDecoder,
@@ -13,6 +20,30 @@ use windows::{
     Storage::Streams::{DataWriter, InMemoryRandomAccessStream},
     Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED},
 };
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrResult {
+    pub text: String,
+    pub lines: Vec<OcrLine>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrLine {
+    pub text: String,
+    pub words: Vec<OcrWord>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrWord {
+    pub text: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
 
 /// RAII guard so COM is uninitialised even on early return / error paths.
 struct ComGuard;
@@ -34,7 +65,7 @@ impl Drop for ComGuard {
 /// Recognise text in `image_bytes`. `lang_tag` is a BCP-47 tag (e.g. "en",
 /// "zh-Hans", "ja"); when `None` or unavailable, the engine falls back to the
 /// user's profile languages.
-pub fn recognize(image_bytes: &[u8], lang_tag: Option<&str>) -> Result<String> {
+pub fn recognize_windows(image_bytes: &[u8], lang_tag: Option<&str>) -> Result<OcrResult> {
     let _com = ComGuard::new();
 
     // 1. Wrap the bytes in an in-memory random-access stream.
@@ -83,17 +114,162 @@ pub fn recognize(image_bytes: &[u8], lang_tag: Option<&str>) -> Result<String> {
         .join()
         .map_err(|e| anyhow!("recognize await: {e}"))?;
 
-    let mut out = String::new();
+    let mut result_lines = Vec::new();
     let lines = result.Lines().map_err(|e| anyhow!("lines: {e}"))?;
     for line in lines {
         if let Ok(text) = line.Text() {
-            if !out.is_empty() {
-                out.push('\n');
+            let mut words = Vec::new();
+            if let Ok(line_words) = line.Words() {
+                for word in line_words {
+                    let Ok(word_text) = word.Text() else {
+                        continue;
+                    };
+                    let Ok(rect) = word.BoundingRect() else {
+                        continue;
+                    };
+                    words.push(OcrWord {
+                        text: word_text.to_string(),
+                        x: rect.X,
+                        y: rect.Y,
+                        width: rect.Width,
+                        height: rect.Height,
+                    });
+                }
             }
-            out.push_str(&text.to_string());
+            result_lines.push(OcrLine {
+                text: text.to_string(),
+                words,
+            });
         }
     }
-    Ok(out)
+
+    let text = result_lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Ok(OcrResult {
+        text,
+        lines: result_lines,
+    })
+}
+
+pub fn recognize_tesseract(image_bytes: &[u8], lang: Option<&str>) -> Result<OcrResult> {
+    let input_path = temp_png_path();
+    fs::write(&input_path, image_bytes).map_err(|e| anyhow!("写入临时图片失败: {e}"))?;
+
+    let tesseract = find_tesseract()?;
+    let tessdata = find_tessdata();
+    let lang_arg = tesseract_lang(lang);
+    let mut last_error = None;
+    for psm in ["6", "11"] {
+        let mut command = Command::new(&tesseract);
+        command.arg(&input_path)
+            .arg("stdout")
+            .arg("-l")
+            .arg(&lang_arg)
+            .arg("--psm")
+            .arg(psm);
+        if let Some(tessdata) = &tessdata {
+            command.env("TESSDATA_PREFIX", tessdata);
+        }
+        let output = command.output();
+
+        match output {
+            Ok(output) if output.status.success() => {
+                let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !text.is_empty() || psm == "11" {
+                    let _ = fs::remove_file(&input_path);
+                    return Ok(result_from_plain_text(text));
+                }
+            }
+            Ok(output) => {
+                last_error = Some(String::from_utf8_lossy(&output.stderr).trim().to_string());
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&input_path);
+                return Err(anyhow!(
+                    "启动 Tesseract 失败。已尝试 PATH 和默认安装目录，请确认 Tesseract OCR 已安装: {e}"
+                ));
+            }
+        }
+    }
+
+    let _ = fs::remove_file(&input_path);
+    Err(anyhow!(
+        "Tesseract OCR 识别失败: {}",
+        last_error
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "无错误输出".to_string())
+    ))
+}
+
+fn find_tesseract() -> Result<PathBuf> {
+    let candidates = [
+        PathBuf::from(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
+        PathBuf::from(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
+        PathBuf::from("tesseract"),
+    ];
+
+    for candidate in candidates {
+        if candidate.components().count() == 1 || candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(anyhow!(
+        "未找到 Tesseract。请先安装 Tesseract OCR 并确保 tesseract 命令在 PATH 中。"
+    ))
+}
+
+fn find_tessdata() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(prefix) = std::env::var("TESSDATA_PREFIX") {
+        candidates.push(PathBuf::from(prefix));
+    }
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(local_app_data).join(r"Tesseract-OCR\tessdata"));
+    }
+    candidates.push(PathBuf::from(r"C:\Program Files\Tesseract-OCR\tessdata"));
+    candidates
+        .into_iter()
+        .find(|path| path.join("eng.traineddata").exists())
+}
+
+fn temp_png_path() -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    std::env::temp_dir().join(format!("transloop-ocr-{stamp}.png"))
+}
+
+fn tesseract_lang(lang: Option<&str>) -> String {
+    match lang.unwrap_or("auto") {
+        "zh" | "zh-Hans" => "chi_sim+eng",
+        "zh-TW" | "zh-Hant" => "chi_tra+eng",
+        "en" => "eng",
+        "ja" => "jpn+eng",
+        "ko" => "kor+eng",
+        "fr" => "fra+eng",
+        "de" => "deu+eng",
+        "es" => "spa+eng",
+        "ru" => "rus+eng",
+        _ => "eng+chi_sim",
+    }
+    .to_string()
+}
+
+fn result_from_plain_text(text: String) -> OcrResult {
+    let lines = text
+        .lines()
+        .map(|line| OcrLine {
+            text: line.to_string(),
+            words: Vec::new(),
+        })
+        .collect();
+    OcrResult { text, lines }
 }
 
 fn build_engine(lang_tag: Option<&str>) -> Result<OcrEngine> {

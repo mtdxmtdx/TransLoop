@@ -206,6 +206,7 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
             >
               <option value="A">A · 多模态模型（识别+翻译一步完成，需联网，准确率最高）</option>
               <option value="B">B · Windows 系统 OCR（离线免费，再调用翻译接口）</option>
+              <option value="C">C · Tesseract 本地 OCR（离线兜底，需本机安装）</option>
             </select>
             {draft.ocrMode === "A" && !visionMeta?.supportVision && (
               <span className="hint" style={{ color: "#d44" }}>
@@ -217,6 +218,12 @@ export function SettingsModal({ open, initial, onClose, onSaved }: Props) {
             {draft.ocrMode === "B" && (
               <span className="hint">
                 依赖系统已安装的 OCR 语言包；识别出的文字会按上面的「源/目标语言」再翻译。
+              </span>
+            )}
+            {draft.ocrMode === "C" && (
+              <span className="hint">
+                依赖本机已安装 Tesseract OCR，并确保 <code>tesseract</code> 命令在 PATH
+                中；适合作为系统 OCR 不可用时的离线兜底。
               </span>
             )}
           </div>

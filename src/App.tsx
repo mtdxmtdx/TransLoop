@@ -7,6 +7,7 @@ import {
 } from "./store";
 import { createProvider } from "./providers";
 import { SettingsModal } from "./SettingsModal";
+import { HistoryPanel } from "./HistoryPanel";
 
 const LANG_OPTIONS = [
   { value: "auto", label: "自动检测" },
@@ -34,6 +35,7 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   const [input, setInput] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -211,6 +213,14 @@ export function App() {
         <div className="spacer" />
 
         <button
+          className="text-btn toolbar-btn"
+          onClick={() => setShowHistory(true)}
+          title="翻译历史"
+        >
+          历史
+        </button>
+
+        <button
           className="icon-btn"
           onClick={() => setShowSettings(true)}
           title="设置"
@@ -273,6 +283,7 @@ export function App() {
           setSettings(next);
         }}
       />
+      <HistoryPanel open={showHistory} onClose={() => setShowHistory(false)} />
     </div>
   );
 }
