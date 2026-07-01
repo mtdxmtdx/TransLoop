@@ -38,28 +38,44 @@ const RESIZE_EDGES: Array<{ cls: string; dir: ResizeDirection }> = [
   { cls: "sw", dir: "SouthWest" },
 ];
 
+const TARGET_LANG_OPTIONS = [
+  { value: "zh", label: "中文" },
+  { value: "zh-TW", label: "繁中" },
+  { value: "en", label: "英文" },
+  { value: "ja", label: "日文" },
+  { value: "ko", label: "韩文" },
+  { value: "fr", label: "法文" },
+  { value: "de", label: "德文" },
+  { value: "es", label: "西语" },
+  { value: "ru", label: "俄文" },
+];
+
 export function Popup() {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [draftSource, setDraftSource] = useState("");
+  const [targetLang, setTargetLang] = useState("zh");
+  const [isPinned, setIsPinned] = useState(false);
   const requestIdRef = useRef(0);
   // 原文区域高度（像素），可通过拖动中间分隔条调整
   const [sourceHeight, setSourceHeight] = useState(80);
   const contentRef = useRef<HTMLDivElement>(null);
   const dividerDragRef = useRef<{ startY: number; startH: number } | null>(null);
 
-  async function runTranslate(payload: PopupPayload) {
+  async function runTranslate(payload: PopupPayload, targetOverride?: string) {
     const id = payload.requestId;
     requestIdRef.current = id;
     setDraftSource(payload.text);
     setState({ kind: "loading", source: payload.text });
     try {
       const settings = await loadSettings();
+      const effectiveSettings = targetOverride ? { ...settings, toLang: targetOverride } : settings;
+      setTargetLang(effectiveSettings.toLang);
       const result = await runTextTranslation(
         payload.text,
-        settings.fromLang,
-        settings.toLang,
+        effectiveSettings.fromLang,
+        effectiveSettings.toLang,
         {
-          settings,
+          settings: effectiveSettings,
           entryKind: "selection",
           onChunk:
         (_delta, full) => {
@@ -76,8 +92,8 @@ export function Popup() {
         kind: "selection",
         original: payload.text,
         translation,
-        fromLang: settings.fromLang,
-        toLang: settings.toLang,
+        fromLang: result.fromLang,
+        toLang: result.toLang,
         provider: result.provider,
         model: result.model,
       }).catch(() => {});
@@ -94,6 +110,7 @@ export function Popup() {
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
     listen<PopupPayload>("popup://text", (event) => {
+      if (isPinned && state.kind !== "idle") return;
       runTranslate(event.payload);
     }).then((fn) => {
       unlisten = fn;
@@ -110,7 +127,7 @@ export function Popup() {
       unlisten?.();
       window.removeEventListener("keydown", onKey);
     };
-  }, []);
+  }, [isPinned, state.kind]);
 
   function handleClose() {
     invoke("hide_popup").catch(() => {});
@@ -176,7 +193,21 @@ export function Popup() {
     await runTranslate({
       text,
       requestId: requestIdRef.current + 1,
-    });
+    }, targetLang);
+  }
+
+  async function handleTargetLangChange(next: string) {
+    setTargetLang(next);
+    if (state.kind === "idle") return;
+    const text = draftSource.trim();
+    if (!text) return;
+    await runTranslate(
+      {
+        text,
+        requestId: requestIdRef.current + 1,
+      },
+      next,
+    );
   }
 
   const sourceText = state.kind === "idle" ? "" : draftSource;
@@ -198,6 +229,22 @@ export function Popup() {
       <div className="content" ref={contentRef}>
         {state.kind !== "idle" && (
           <div className="popup-actions">
+            <button className="text-btn" onClick={() => setIsPinned((prev) => !prev)}>
+              {isPinned ? "取消固定" : "固定"}
+            </button>
+            <select
+              className="popup-lang-select"
+              value={targetLang}
+              onChange={(e) => handleTargetLangChange(e.target.value)}
+              disabled={state.kind === "loading"}
+              title="目标语言"
+            >
+              {TARGET_LANG_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
             <button className="text-btn" onClick={() => copyText(sourceText)}>
               复制原文
             </button>

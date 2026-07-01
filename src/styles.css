@@ -1169,7 +1169,7 @@ body.overlay-body {
 
 .usage-stats {
   display: grid;
-  grid-template-columns: repeat(6, minmax(110px, 1fr));
+  grid-template-columns: repeat(7, minmax(110px, 1fr));
   gap: 1px;
   background: rgba(255, 255, 255, 0.08);
 }
@@ -1244,6 +1244,21 @@ body.overlay-body {
 .usage-badge.skipped {
   color: #ffd166;
   background: rgba(255, 209, 102, 0.14);
+}
+
+.usage-badge.cache_hit {
+  color: #80d8ff;
+  background: rgba(64, 196, 255, 0.14);
+}
+
+.popup-lang-select {
+  min-width: 76px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font-size: 12px;
 }
 
 .usage-empty {

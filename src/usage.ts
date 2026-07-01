@@ -3,7 +3,7 @@ import type { OcrMode } from "./store";
 import type { ProviderName } from "./providers/types";
 
 export type UsageEntryKind = "main" | "selection" | "capture" | "test";
-export type UsageStatus = "success" | "error" | "skipped";
+export type UsageStatus = "success" | "error" | "skipped" | "cache_hit";
 
 export interface UsageRecord {
   id: string;
@@ -16,6 +16,9 @@ export interface UsageRecord {
   toLang: string;
   ocrMode?: OcrMode;
   status: UsageStatus;
+  cacheHit?: boolean;
+  resolvedFromLang?: string;
+  resolvedToLang?: string;
   errorKind?: string;
   errorSummary?: string;
   durationMs: number;

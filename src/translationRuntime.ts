@@ -2,6 +2,7 @@ import { createProvider } from "./providers";
 import { PROVIDER_REGISTRY, type ProviderName, type VisionResult } from "./providers/types";
 import type { AppSettings, OcrMode } from "./store";
 import { getProviderKey } from "./store";
+import { getCachedTranslation, setCachedTranslation } from "./translationCache";
 import {
   addUsage,
   createUsageGroupId,
@@ -38,6 +39,9 @@ export interface TranslationRunResult {
   model: string;
   usedFallback: boolean;
   attempts: ProviderAttempt[];
+  fromLang: string;
+  toLang: string;
+  cacheHit: boolean;
 }
 
 export interface ImageTranslationRunResult extends Omit<TranslationRunResult, "text"> {
@@ -73,6 +77,36 @@ export async function runTextTranslation(
 ): Promise<TranslationRunResult> {
   const groupId = createUsageGroupId();
   const attempts: ProviderAttempt[] = [];
+  const direction = resolveLanguageDirection(text, fromLang, toLang, options.settings);
+
+  if (options.settings.translationCacheEnabled) {
+    const cached = await getCachedTranslation(text, direction.fromLang, direction.toLang);
+    if (cached) {
+      await recordCacheHit({
+        settings: options.settings,
+        groupId,
+        entryKind: options.entryKind,
+        requestedFromLang: fromLang,
+        requestedToLang: toLang,
+        resolvedFromLang: direction.fromLang,
+        resolvedToLang: direction.toLang,
+        ocrMode: options.ocrMode,
+        inputChars: text.length,
+        outputChars: cached.translation.length,
+      });
+      return {
+        text: cached.translation,
+        provider: options.settings.provider,
+        model: options.settings.model,
+        usedFallback: false,
+        attempts,
+        fromLang: direction.fromLang,
+        toLang: direction.toLang,
+        cacheHit: true,
+      };
+    }
+  }
+
   const candidates = await buildTextCandidates(options.settings);
   let lastError: Error | undefined;
 
@@ -82,8 +116,10 @@ export async function runTextTranslation(
         candidate,
         groupId,
         entryKind: options.entryKind,
-        fromLang,
-        toLang,
+        requestedFromLang: fromLang,
+        requestedToLang: toLang,
+        resolvedFromLang: direction.fromLang,
+        resolvedToLang: direction.toLang,
         ocrMode: options.ocrMode,
         status: "skipped",
         durationMs: 0,
@@ -106,7 +142,7 @@ export async function runTextTranslation(
         model: candidate.model,
       });
       const result = await withTimeout(
-        provider.translate(text, fromLang, toLang, (delta, full) => {
+        provider.translate(text, direction.fromLang, direction.toLang, (delta, full) => {
           if (active) options.onChunk?.(delta, full);
         }),
         options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -120,8 +156,10 @@ export async function runTextTranslation(
         candidate,
         groupId,
         entryKind: options.entryKind,
-        fromLang,
-        toLang,
+        requestedFromLang: fromLang,
+        requestedToLang: toLang,
+        resolvedFromLang: direction.fromLang,
+        resolvedToLang: direction.toLang,
         ocrMode: options.ocrMode,
         status: "success",
         durationMs,
@@ -129,12 +167,23 @@ export async function runTextTranslation(
         outputChars: result.length,
       });
       attempts.push(attempt);
+      if (options.settings.translationCacheEnabled) {
+        await setCachedTranslation({
+          text,
+          fromLang: direction.fromLang,
+          toLang: direction.toLang,
+          translation: result,
+        }).catch(() => {});
+      }
       return {
         text: result,
         provider: candidate.provider,
         model: candidate.model,
         usedFallback: candidate.isFallback,
         attempts,
+        fromLang: direction.fromLang,
+        toLang: direction.toLang,
+        cacheHit: false,
       };
     } catch (e) {
       active = false;
@@ -144,8 +193,10 @@ export async function runTextTranslation(
         candidate,
         groupId,
         entryKind: options.entryKind,
-        fromLang,
-        toLang,
+        requestedFromLang: fromLang,
+        requestedToLang: toLang,
+        resolvedFromLang: direction.fromLang,
+        resolvedToLang: direction.toLang,
         ocrMode: options.ocrMode,
         status: "error",
         durationMs,
@@ -170,6 +221,7 @@ export async function runImageTranslation(
 ): Promise<ImageTranslationRunResult> {
   const groupId = createUsageGroupId();
   const attempts: ProviderAttempt[] = [];
+  const direction = resolveLanguageDirection("", fromLang, toLang, options.settings);
   const candidates = await buildTextCandidates(options.settings);
   let lastError: Error | undefined;
 
@@ -184,8 +236,10 @@ export async function runImageTranslation(
         candidate,
         groupId,
         entryKind: options.entryKind,
-        fromLang,
-        toLang,
+        requestedFromLang: fromLang,
+        requestedToLang: toLang,
+        resolvedFromLang: direction.fromLang,
+        resolvedToLang: direction.toLang,
         ocrMode: options.ocrMode,
         status: "skipped",
         durationMs: 0,
@@ -208,7 +262,7 @@ export async function runImageTranslation(
       });
       if (!provider.translateImage) throw new Error("该 Provider 不支持图片输入。");
       const result = await withTimeout(
-        provider.translateImage(imageDataUrl, fromLang, toLang),
+        provider.translateImage(imageDataUrl, direction.fromLang, direction.toLang),
         options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       );
       const outputChars = result.original.length + result.translation.length;
@@ -216,8 +270,10 @@ export async function runImageTranslation(
         candidate,
         groupId,
         entryKind: options.entryKind,
-        fromLang,
-        toLang,
+        requestedFromLang: fromLang,
+        requestedToLang: toLang,
+        resolvedFromLang: direction.fromLang,
+        resolvedToLang: direction.toLang,
         ocrMode: options.ocrMode,
         status: "success",
         durationMs: Math.round(performance.now() - started),
@@ -232,6 +288,9 @@ export async function runImageTranslation(
         model: candidate.model,
         usedFallback: candidate.isFallback,
         attempts,
+        fromLang: direction.fromLang,
+        toLang: direction.toLang,
+        cacheHit: false,
       };
     } catch (e) {
       const error = normalizeError(e);
@@ -239,8 +298,10 @@ export async function runImageTranslation(
         candidate,
         groupId,
         entryKind: options.entryKind,
-        fromLang,
-        toLang,
+        requestedFromLang: fromLang,
+        requestedToLang: toLang,
+        resolvedFromLang: direction.fromLang,
+        resolvedToLang: direction.toLang,
         ocrMode: options.ocrMode,
         status: "error",
         durationMs: Math.round(performance.now() - started),
@@ -348,8 +409,10 @@ async function recordAttempt(input: {
   candidate: RuntimeCandidate;
   groupId: string;
   entryKind: UsageEntryKind;
-  fromLang: string;
-  toLang: string;
+  requestedFromLang: string;
+  requestedToLang: string;
+  resolvedFromLang: string;
+  resolvedToLang: string;
   ocrMode?: OcrMode;
   status: UsageStatus;
   durationMs: number;
@@ -365,8 +428,11 @@ async function recordAttempt(input: {
     entryKind: input.entryKind,
     provider: input.candidate.provider,
     model: input.candidate.model,
-    fromLang: input.fromLang,
-    toLang: input.toLang,
+    fromLang: input.requestedFromLang,
+    toLang: input.requestedToLang,
+    resolvedFromLang: input.resolvedFromLang,
+    resolvedToLang: input.resolvedToLang,
+    cacheHit: false,
     ocrMode: input.ocrMode,
     status: input.status,
     errorKind: input.errorKind,
@@ -392,6 +458,42 @@ async function recordAttempt(input: {
     errorKind: input.errorKind,
     errorSummary: input.errorSummary,
   };
+}
+
+async function recordCacheHit(input: {
+  settings: AppSettings;
+  groupId: string;
+  entryKind: UsageEntryKind;
+  requestedFromLang: string;
+  requestedToLang: string;
+  resolvedFromLang: string;
+  resolvedToLang: string;
+  ocrMode?: OcrMode;
+  inputChars: number;
+  outputChars: number;
+}): Promise<void> {
+  const estimatedInputTokens = estimateTokens(input.inputChars);
+  const estimatedOutputTokens = estimateTokens(input.outputChars);
+  await addUsage({
+    fallbackGroupId: input.groupId,
+    entryKind: input.entryKind,
+    provider: input.settings.provider,
+    model: input.settings.model,
+    fromLang: input.requestedFromLang,
+    toLang: input.requestedToLang,
+    resolvedFromLang: input.resolvedFromLang,
+    resolvedToLang: input.resolvedToLang,
+    ocrMode: input.ocrMode,
+    status: "cache_hit",
+    cacheHit: true,
+    durationMs: 0,
+    isFallback: false,
+    inputChars: input.inputChars,
+    outputChars: input.outputChars,
+    estimatedInputTokens,
+    estimatedOutputTokens,
+    estimatedCostUsd: 0,
+  }).catch(() => {});
 }
 
 function normalizeError(e: unknown): { kind: ProviderErrorKind; summary: string } {
@@ -426,6 +528,55 @@ function normalizeError(e: unknown): { kind: ProviderErrorKind; summary: string 
     return { kind: "network", summary };
   }
   return { kind: "unknown", summary };
+}
+
+function resolveLanguageDirection(
+  text: string,
+  fromLang: string,
+  toLang: string,
+  settings: AppSettings,
+): { fromLang: string; toLang: string } {
+  if (!settings.smartDirectionEnabled || fromLang !== "auto") {
+    return { fromLang, toLang };
+  }
+  const detected = detectSourceLanguage(text);
+  const primary = settings.smartPrimaryTargetLang || toLang;
+  const alternate = settings.smartAlternateTargetLang || toLang;
+  return {
+    fromLang: detected,
+    toLang: sameLanguage(detected, primary) ? alternate : primary,
+  };
+}
+
+function detectSourceLanguage(text: string): string {
+  const sample = text.trim();
+  if (!sample) return "auto";
+
+  const counts = {
+    zh: countMatches(sample, /[\u4e00-\u9fff]/g),
+    ja: countMatches(sample, /[\u3040-\u30ff]/g),
+    ko: countMatches(sample, /[\uac00-\ud7af]/g),
+    ru: countMatches(sample, /[\u0400-\u04ff]/g),
+    latin: countMatches(sample, /[A-Za-z]/g),
+  };
+  const letters = counts.zh + counts.ja + counts.ko + counts.ru + counts.latin;
+  if (letters === 0) return "auto";
+  if (counts.ja > 0) return "ja";
+  if (counts.ko / letters > 0.3) return "ko";
+  if (counts.ru / letters > 0.3) return "ru";
+  if (counts.zh / letters > 0.2) return "zh";
+  if (counts.latin / letters > 0.5) return "en";
+  return "auto";
+}
+
+function countMatches(text: string, pattern: RegExp): number {
+  return text.match(pattern)?.length ?? 0;
+}
+
+function sameLanguage(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (a.startsWith("zh") && b.startsWith("zh")) return true;
+  return false;
 }
 
 function withTimeout<T>(
@@ -466,6 +617,10 @@ function createMinimalSettings(candidate: RuntimeCandidate): AppSettings {
     fallbackModels: [],
     fallbackProviderOrder: [],
     providerConfigs: {},
+    smartDirectionEnabled: false,
+    smartPrimaryTargetLang: "zh",
+    smartAlternateTargetLang: "en",
+    translationCacheEnabled: false,
   };
 }
 

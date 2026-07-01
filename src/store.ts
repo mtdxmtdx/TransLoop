@@ -26,6 +26,10 @@ export interface AppSettings {
   fallbackModels: string[];
   fallbackProviderOrder: ProviderName[];
   providerConfigs: Partial<Record<ProviderName, { baseUrl: string; model: string }>>;
+  smartDirectionEnabled: boolean;
+  smartPrimaryTargetLang: string;
+  smartAlternateTargetLang: string;
+  translationCacheEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -48,6 +52,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fallbackModels: [],
   fallbackProviderOrder: ["openai", "qwen", "claude", "gemini", "deepseek", "grok", "minimax"],
   providerConfigs: {},
+  smartDirectionEnabled: true,
+  smartPrimaryTargetLang: "zh",
+  smartAlternateTargetLang: "en",
+  translationCacheEnabled: true,
 };
 
 const STORE_FILE = "settings.json";

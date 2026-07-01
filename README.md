@@ -75,7 +75,7 @@ pnpm tauri build    # 生产构建
 
 ### 划词翻译（`Alt+Q`）
 
-在任意应用选中文字 → 按快捷键 → 光标旁弹出悬浮窗显示流式译文。窗口可拖拽、缩放，原文区可手动编辑后重新翻译，并支持复制原文 / 复制译文；点 × 或 Esc 关闭。
+在任意应用选中文字 → 按快捷键 → 光标旁弹出悬浮窗显示流式译文。窗口可拖拽、缩放，原文区可手动编辑后重新翻译，并支持固定窗口、目标语言快速切换、复制原文 / 复制译文；点 × 或 Esc 关闭。
 
 ### 截图翻译（`Alt+S`）
 
@@ -104,15 +104,18 @@ pnpm tauri build    # 生产构建
 
 `%APPDATA%\com.transloop.app\settings.json`（Windows）
 
-字段（不含密钥）：`hotkey`, `captureHotkey`, `provider`, `baseUrl`, `model`, `fromLang`, `toLang`, `streamOutput`, `ocrMode`, `visionCollab`, `recognizeProvider`, `recognizeBaseUrl`, `recognizeModel`, `fallbackEnabled`, `fallbackModels`, `fallbackProviderOrder`, `providerConfigs`。API Key 按提供方分开保存在 OS keyring 中（`apikey.<provider>`），不在 settings.json 里落盘。
+字段（不含密钥）：`hotkey`, `captureHotkey`, `provider`, `baseUrl`, `model`, `fromLang`, `toLang`, `streamOutput`, `ocrMode`, `visionCollab`, `recognizeProvider`, `recognizeBaseUrl`, `recognizeModel`, `fallbackEnabled`, `fallbackModels`, `fallbackProviderOrder`, `providerConfigs`, `smartDirectionEnabled`, `smartPrimaryTargetLang`, `smartAlternateTargetLang`, `translationCacheEnabled`。API Key 按提供方分开保存在 OS keyring 中（`apikey.<provider>`），不在 settings.json 里落盘。
 
 `%APPDATA%\com.transloop.app\usage.json` 保存 Provider 请求元数据和用量估算，默认保留最近 90 天 / 最多 5000 条记录；不保存原文、译文或截图内容。
+
+`%APPDATA%\com.transloop.app\translation-cache.json` 保存短期翻译缓存，默认保留 24 小时 / 最多 1000 条；缓存保存原文哈希和译文，不保存原文正文。
 
 ## 已知约束
 
 - 划词依赖剪贴板：会临时覆盖后恢复用户原有内容。个别 UIPI 保护的窗口可能漏读。
 - API Key 按提供方分别存入 OS keyring（Windows 凭据管理器），不在配置文件中落盘。
 - 用量统计仅为本地估算，不等同于服务商账单。
+- 智能语言方向使用轻量本地规则判断常见语言，不额外调用模型。
 - 截图捕获当前光标所在显示器（多屏环境以光标为准）。
 - OCR 模式 B 依赖系统已安装的语言包。
 - OCR 模式 C 依赖本机已安装 Tesseract OCR，并且 `tesseract` 命令可在 PATH 中调用。
@@ -129,7 +132,7 @@ pnpm tauri build    # 生产构建
 | 4 | 开机自启 + NSIS 安装包 | ✅ |
 | 5 | OCR 增强 + 翻译历史 | ✅ |
 | 6 | Provider 连通性测试 + 备用模型降级 + 用量统计 | ✅ |
-| 7 | 划词悬浮窗增强 + 智能语言方向 + 翻译缓存 | ⏳ 规划中 |
+| 7 | 划词悬浮窗增强 + 智能语言方向 + 翻译缓存 | ✅ |
 | 8 | 自动更新 + 首次启动引导 + 诊断日志 + 设置导入/导出 | ⏳ 规划中 |
 
 ### 后续计划
@@ -137,7 +140,7 @@ pnpm tauri build    # 生产构建
 - **取消浏览器插件方向**：TransLoop 后续聚焦桌面端划词翻译、截图翻译和本地 OCR 体验，不再维护浏览器插件路线。
 - **OCR 增强**：补充 OCR 模式 C/D，优先考虑 Tesseract 本地 OCR 或第三方 OCR API；截图结果尽量保留段落、换行、表格和代码块结构。
 - **翻译历史**：保存最近的划词和截图翻译结果，支持搜索、复制、删除，便于回看高频内容。
-- **划词体验**：悬浮窗增加固定、复制原文/译文、重新翻译、目标语言快速切换、朗读译文等操作。
+- **划词体验**：悬浮窗增加固定、复制原文/译文、重新翻译、目标语言快速切换等操作。
 - **智能语言方向**：自动判断原文语言，例如中文转英文、英文转中文，减少手动切换。
 - **翻译缓存**：同一文本短时间内复用结果，降低 API 成本并提升响应速度。
 - **Provider 稳定性**：设置页增加连接测试；请求失败时支持备用 Provider/模型降级；记录每日请求次数和估算用量。
@@ -146,6 +149,15 @@ pnpm tauri build    # 生产构建
 ---
 
 ## 更新日志
+
+### 0.7.0 · 2026-07-01 — Stage 7：划词体验增强、智能语言方向与翻译缓存
+
+- **划词悬浮窗增强**：新增固定窗口和目标语言快速切换；固定后新的划词事件不会覆盖当前悬浮窗，语言切换会基于当前可编辑原文重新翻译。
+- **智能语言方向**：新增「默认翻译成」和「如果原文已是该语言，则翻译成」配置；源语言为自动检测时，中文默认转英文、英文默认转中文，也可自定义为英语转日语等组合。
+- **短期翻译缓存**：新增本地 `translation-cache.json`，同一原文哈希和同一语言方向在 24 小时内复用译文，减少重复 API 请求；缓存不保存原文正文。
+- **Runtime 集成**：统一翻译运行时会先解析智能语言方向，再查缓存，未命中时才进入 Provider/降级链路；缓存命中仍写入用量记录。
+- **用量面板增强**：新增缓存命中筛选、缓存命中次数和命中率统计，并在 CSV 导出中包含缓存和解析后语言方向字段。
+- **设置页增强**：新增智能语言方向、翻译缓存开关和清空缓存按钮。
 
 ### 0.6.0 · 2026-07-01 — Stage 6：Provider 可观测性与自动降级
 

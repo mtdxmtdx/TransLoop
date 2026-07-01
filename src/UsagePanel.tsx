@@ -7,7 +7,7 @@ interface Props {
   onClose: () => void;
 }
 
-type StatusFilter = "all" | "success" | "error" | "skipped";
+type StatusFilter = "all" | "success" | "error" | "skipped" | "cache_hit";
 type EntryFilter = "all" | "main" | "selection" | "capture" | "test";
 
 export function UsagePanel({ open, onClose }: Props) {
@@ -53,8 +53,11 @@ export function UsagePanel({ open, onClose }: Props) {
       "status",
       "durationMs",
       "isFallback",
+      "cacheHit",
       "fromLang",
       "toLang",
+      "resolvedFromLang",
+      "resolvedToLang",
       "ocrMode",
       "inputChars",
       "outputChars",
@@ -121,6 +124,7 @@ export function UsagePanel({ open, onClose }: Props) {
           <select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)}>
             <option value="all">全部状态</option>
             <option value="success">成功</option>
+            <option value="cache_hit">缓存命中</option>
             <option value="error">失败</option>
             <option value="skipped">跳过</option>
           </select>
@@ -138,6 +142,7 @@ export function UsagePanel({ open, onClose }: Props) {
           <Metric label="平均耗时" value={`${stats.avgMs}ms`} />
           <Metric label="P95 耗时" value={`${stats.p95Ms}ms`} />
           <Metric label="降级次数" value={stats.fallbacks.toString()} />
+          <Metric label="缓存命中" value={`${stats.cacheHits} / ${stats.cacheRate}%`} />
           <Metric label="估算费用" value={formatCost(stats.cost)} />
         </section>
 
@@ -200,7 +205,12 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function summarize(records: UsageRecord[]) {
   const total = records.length;
-  const successes = records.filter((record) => record.status === "success").length;
+  const successes = records.filter(
+    (record) => record.status === "success" || record.status === "cache_hit",
+  ).length;
+  const cacheHits = records.filter(
+    (record) => record.cacheHit || record.status === "cache_hit",
+  ).length;
   const durations = records
     .filter((record) => record.durationMs > 0)
     .map((record) => record.durationMs)
@@ -219,6 +229,8 @@ function summarize(records: UsageRecord[]) {
     p95Ms,
     cost,
     fallbacks: records.filter((record) => record.isFallback).length,
+    cacheHits,
+    cacheRate: total ? Math.round((cacheHits / total) * 100) : 0,
   };
 }
 
@@ -236,17 +248,16 @@ function formatCost(value?: number): string {
 }
 
 function entryLabel(value: UsageRecord["entryKind"]): string {
-  return (
-    {
-      main: "主窗口",
-      selection: "划词",
-      capture: "截图",
-      test: "测试",
-    } as Record<UsageRecord["entryKind"], string>
-  )[value];
+  return {
+    main: "主窗口",
+    selection: "划词",
+    capture: "截图",
+    test: "测试",
+  }[value];
 }
 
 function statusLabel(record: UsageRecord): string {
+  if (record.status === "cache_hit") return "缓存命中";
   if (record.status === "success") return record.isFallback ? "降级成功" : "成功";
   if (record.status === "skipped") return "跳过";
   return record.isFallback ? "降级失败" : "失败";

@@ -11,6 +11,7 @@ import {
 import { PROVIDER_REGISTRY, type ProviderName } from "./providers/types";
 import { HotkeyInput } from "./HotkeyInput";
 import { testProviderConnection, type ProviderAttempt } from "./translationRuntime";
+import { clearTranslationCache } from "./translationCache";
 
 interface Props {
   open: boolean;
@@ -21,6 +22,18 @@ interface Props {
 }
 
 type StatusKind = "idle" | "saving" | "success" | "error";
+
+const SMART_LANG_OPTIONS = [
+  { value: "zh", label: "中文（简体）" },
+  { value: "zh-TW", label: "中文（繁体）" },
+  { value: "en", label: "英文" },
+  { value: "ja", label: "日文" },
+  { value: "ko", label: "韩文" },
+  { value: "fr", label: "法文" },
+  { value: "de", label: "德文" },
+  { value: "es", label: "西班牙文" },
+  { value: "ru", label: "俄文" },
+];
 
 export function SettingsModal({ open, initial, onClose, onSaved, onOpenUsage }: Props) {
   const [draft, setDraft] = useState<AppSettings>(initial);
@@ -244,6 +257,11 @@ export function SettingsModal({ open, initial, onClose, onSaved, onOpenUsage }: 
           : `连接失败：${attempt.errorSummary ?? attempt.errorKind ?? "未知错误"}`}
       </span>
     );
+  }
+
+  async function handleClearTranslationCache() {
+    await clearTranslationCache();
+    setStatus({ kind: "success", text: "翻译缓存已清空" });
   }
 
   if (!open) return null;
@@ -503,6 +521,67 @@ export function SettingsModal({ open, initial, onClose, onSaved, onOpenUsage }: 
               启用后 TransLoop 会在系统启动时自动运行，可在托盘菜单中快速切换。
             </span>
           </div>
+          <div className="field fallback-block">
+            <label className="toggle-row">
+              <span>启用智能语言方向</span>
+              <input
+                type="checkbox"
+                checked={draft.smartDirectionEnabled}
+                onChange={(e) => update("smartDirectionEnabled", e.target.checked)}
+              />
+              <span className="toggle" />
+            </label>
+            <span className="hint">
+              源语言为自动检测时生效：默认翻译到指定语言；如果原文已是该语言，则翻译到备用语言。
+            </span>
+            <div className="row">
+              <div className="field">
+                <label>默认翻译成</label>
+                <select
+                  value={draft.smartPrimaryTargetLang}
+                  onChange={(e) => update("smartPrimaryTargetLang", e.target.value)}
+                >
+                  {SMART_LANG_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>如果原文已是该语言，则翻译成</label>
+                <select
+                  value={draft.smartAlternateTargetLang}
+                  onChange={(e) => update("smartAlternateTargetLang", e.target.value)}
+                >
+                  {SMART_LANG_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="field fallback-block">
+            <label className="toggle-row">
+              <span>启用翻译缓存</span>
+              <input
+                type="checkbox"
+                checked={draft.translationCacheEnabled}
+                onChange={(e) => update("translationCacheEnabled", e.target.checked)}
+              />
+              <span className="toggle" />
+            </label>
+            <span className="hint">
+              缓存保存译文和原文哈希，不保存原文正文；默认保留 24 小时，最多 1000 条。
+            </span>
+            <button className="ghost" onClick={handleClearTranslationCache}>
+              清空翻译缓存
+            </button>
+          </div>
+
           <div className="field fallback-block">
             <label className="toggle-row">
               <span>启用自动降级</span>
