@@ -6,6 +6,7 @@ import { loadSettings } from "./store";
 import { createProvider } from "./providers";
 import { addHistory } from "./history";
 import { runImageTranslation, runTextTranslation } from "./translationRuntime";
+import { logDiagnosticEvent } from "./diagnostics";
 
 interface CropPayload {
   dataUrl: string;
@@ -245,9 +246,19 @@ export function CaptureView() {
       await translateRecognizedText(original, settings, seq, imagePreview);
     } catch (e) {
       if (runSeq.current !== seq) return;
+      const message = e instanceof Error ? e.message : String(e);
+      const settings = await loadSettings().catch(() => null);
+      if (settings?.diagnosticLoggingEnabled) {
+        logDiagnosticEvent({
+          level: "error",
+          category: "ocr",
+          message: "截图翻译失败",
+          errorSummary: message,
+        });
+      }
       setState({
         kind: "error",
-        message: e instanceof Error ? e.message : String(e),
+        message,
       });
     }
   }

@@ -30,6 +30,9 @@ export interface AppSettings {
   smartPrimaryTargetLang: string;
   smartAlternateTargetLang: string;
   translationCacheEnabled: boolean;
+  onboardingCompleted: boolean;
+  lastUpdateCheckAt?: string;
+  diagnosticLoggingEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -56,6 +59,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   smartPrimaryTargetLang: "zh",
   smartAlternateTargetLang: "en",
   translationCacheEnabled: true,
+  onboardingCompleted: false,
+  lastUpdateCheckAt: undefined,
+  diagnosticLoggingEnabled: true,
 };
 
 const STORE_FILE = "settings.json";

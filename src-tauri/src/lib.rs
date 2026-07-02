@@ -5,7 +5,9 @@ mod selection;
 mod shortcut;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use serde::Serialize;
 use serde_json::Value;
+use std::process::Command;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -18,6 +20,17 @@ const STORE_FILE: &str = "settings.json";
 const SETTINGS_KEY: &str = "settings";
 const DEFAULT_HOTKEY: &str = "Alt+Q";
 const DEFAULT_CAPTURE_HOTKEY: &str = "Alt+S";
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosticSnapshot {
+    app_version: String,
+    platform: String,
+    arch: String,
+    tesseract_available: bool,
+    tesseract_version: Option<String>,
+    tesseract_error: Option<String>,
+}
 
 fn read_setting_string(app: &AppHandle, key: &str, default: &str) -> String {
     if let Ok(store) = app.store(STORE_FILE) {
@@ -198,6 +211,39 @@ async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+async fn diagnostic_snapshot(app: AppHandle) -> Result<DiagnosticSnapshot, String> {
+    let tesseract = Command::new("tesseract").arg("--version").output();
+    let (tesseract_available, tesseract_version, tesseract_error) = match tesseract {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let first_line = text.lines().next().map(|s| s.to_string());
+            (true, first_line, None)
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            (
+                false,
+                None,
+                Some(if stderr.is_empty() {
+                    format!("tesseract exited with status {}", output.status)
+                } else {
+                    stderr
+                }),
+            )
+        }
+        Err(e) => (false, None, Some(e.to_string())),
+    };
+    Ok(DiagnosticSnapshot {
+        app_version: app.package_info().version.to_string(),
+        platform: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        tesseract_available,
+        tesseract_version,
+        tesseract_error,
+    })
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出 TransLoop", true, None::<&str>)?;
@@ -324,7 +370,8 @@ pub fn run() {
             get_secret,
             delete_secret,
             get_autostart_status,
-            set_autostart
+            set_autostart,
+            diagnostic_snapshot
         ])
         .run(tauri::generate_context!())
         .expect("error while running TransLoop");

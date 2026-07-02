@@ -104,11 +104,15 @@ pnpm tauri build    # 生产构建
 
 `%APPDATA%\com.transloop.app\settings.json`（Windows）
 
-字段（不含密钥）：`hotkey`, `captureHotkey`, `provider`, `baseUrl`, `model`, `fromLang`, `toLang`, `streamOutput`, `ocrMode`, `visionCollab`, `recognizeProvider`, `recognizeBaseUrl`, `recognizeModel`, `fallbackEnabled`, `fallbackModels`, `fallbackProviderOrder`, `providerConfigs`, `smartDirectionEnabled`, `smartPrimaryTargetLang`, `smartAlternateTargetLang`, `translationCacheEnabled`。API Key 按提供方分开保存在 OS keyring 中（`apikey.<provider>`），不在 settings.json 里落盘。
+字段（不含密钥）：`hotkey`, `captureHotkey`, `provider`, `baseUrl`, `model`, `fromLang`, `toLang`, `streamOutput`, `ocrMode`, `visionCollab`, `recognizeProvider`, `recognizeBaseUrl`, `recognizeModel`, `fallbackEnabled`, `fallbackModels`, `fallbackProviderOrder`, `providerConfigs`, `smartDirectionEnabled`, `smartPrimaryTargetLang`, `smartAlternateTargetLang`, `translationCacheEnabled`, `onboardingCompleted`, `lastUpdateCheckAt`, `diagnosticLoggingEnabled`。API Key 按提供方分开保存在 OS keyring 中（`apikey.<provider>`），不在 settings.json 里落盘。
 
 `%APPDATA%\com.transloop.app\usage.json` 保存 Provider 请求元数据和用量估算，默认保留最近 90 天 / 最多 5000 条记录；不保存原文、译文或截图内容。
 
 `%APPDATA%\com.transloop.app\translation-cache.json` 保存短期翻译缓存，默认保留 24 小时 / 最多 1000 条；缓存保存原文哈希和译文，不保存原文正文。
+
+`%APPDATA%\com.transloop.app\diagnostics.json` 保存脱敏诊断日志，默认保留最近 14 天；只记录运行状态、Provider / 模型、耗时和错误摘要，不保存 API Key、原文、译文或截图。
+
+设置页可导出脱敏诊断包和非密钥设置文件。诊断包包含版本、平台、Tesseract 检测结果、脱敏设置、诊断日志和用量汇总；设置导出不包含 API Key，导入后如缺 Key 需要在本机重新填写。
 
 ## 已知约束
 
@@ -133,7 +137,7 @@ pnpm tauri build    # 生产构建
 | 5 | OCR 增强 + 翻译历史 | ✅ |
 | 6 | Provider 连通性测试 + 备用模型降级 + 用量统计 | ✅ |
 | 7 | 划词悬浮窗增强 + 智能语言方向 + 翻译缓存 | ✅ |
-| 8 | 自动更新 + 首次启动引导 + 诊断日志 + 设置导入/导出 | ⏳ 规划中 |
+| 8 | 自动更新 + 首次启动引导 + 诊断日志 + 设置导入/导出 | ✅ |
 
 ### 后续计划
 
@@ -149,6 +153,14 @@ pnpm tauri build    # 生产构建
 ---
 
 ## 更新日志
+
+### 0.8.0 · 2026-07-02 — Stage 8：产品化收尾、更新检查、首次引导与诊断迁移
+
+- **更新检查**：设置页新增「检查更新」，从 GitHub Releases 获取最新版本、发布时间和下载地址；失败时写入脱敏诊断日志。
+- **首次启动引导**：新增三步引导，覆盖 Provider / API Key、快捷键 / OCR、智能语言方向 / 缓存隐私说明；设置页可重新打开。
+- **诊断日志**：新增本地 `diagnostics.json`，记录 Provider、OCR、更新检查、导入导出等错误摘要和运行元数据，不保存正文、截图或密钥。
+- **诊断包导出**：设置页可导出 zip 诊断包，包含版本、平台、Tesseract 检测结果、脱敏设置、诊断日志和用量汇总。
+- **设置导入/导出**：支持导出 / 导入非密钥设置，导入时会校验字段、合并默认值并重载快捷键；API Key 继续保存在系统 keyring 中。
 
 ### 0.7.0 · 2026-07-01 — Stage 7：划词体验增强、智能语言方向与翻译缓存
 

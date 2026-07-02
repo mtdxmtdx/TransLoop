@@ -12,6 +12,15 @@ import { PROVIDER_REGISTRY, type ProviderName } from "./providers/types";
 import { HotkeyInput } from "./HotkeyInput";
 import { testProviderConnection, type ProviderAttempt } from "./translationRuntime";
 import { clearTranslationCache } from "./translationCache";
+import { checkForUpdates, type UpdateCheckResult } from "./updates";
+import { APP_VERSION } from "./appInfo";
+import { downloadBlob, downloadText } from "./fileDownload";
+import {
+  createDiagnosticPackage,
+  createSettingsExport,
+  parseImportedSettings,
+} from "./settingsTransfer";
+import { logDiagnosticEvent } from "./diagnostics";
 
 interface Props {
   open: boolean;
@@ -19,6 +28,7 @@ interface Props {
   onClose: () => void;
   onSaved: (next: AppSettings) => void;
   onOpenUsage?: () => void;
+  onOpenOnboarding?: () => void;
 }
 
 type StatusKind = "idle" | "saving" | "success" | "error";
@@ -35,7 +45,14 @@ const SMART_LANG_OPTIONS = [
   { value: "ru", label: "俄文" },
 ];
 
-export function SettingsModal({ open, initial, onClose, onSaved, onOpenUsage }: Props) {
+export function SettingsModal({
+  open,
+  initial,
+  onClose,
+  onSaved,
+  onOpenUsage,
+  onOpenOnboarding,
+}: Props) {
   const [draft, setDraft] = useState<AppSettings>(initial);
   // 按提供方缓存 API Key。输入框显示/编辑的是 keyMap[当前提供方]，
   // 因此切换提供方会自动切换到对应的 key，且各家分别保存。
@@ -50,12 +67,18 @@ export function SettingsModal({ open, initial, onClose, onSaved, onOpenUsage }: 
     recognize?: ProviderAttempt;
     loading?: "main" | "recognize";
   }>({});
+  const [updateStatus, setUpdateStatus] = useState<{
+    loading: boolean;
+    result?: UpdateCheckResult;
+    error?: string;
+  }>({ loading: false });
 
   useEffect(() => {
     if (!open) return;
     setDraft(initial);
     setStatus({ kind: "idle", text: "" });
     setTestStatus({});
+    setUpdateStatus({ loading: false });
     // 加载开机自启动状态
     invoke<boolean>("get_autostart_status")
       .then(setAutostart)
@@ -262,6 +285,96 @@ export function SettingsModal({ open, initial, onClose, onSaved, onOpenUsage }: 
   async function handleClearTranslationCache() {
     await clearTranslationCache();
     setStatus({ kind: "success", text: "翻译缓存已清空" });
+  }
+
+  async function handleCheckUpdate() {
+    setUpdateStatus({ loading: true });
+    try {
+      const result = await checkForUpdates();
+      update("lastUpdateCheckAt", new Date().toISOString());
+      setUpdateStatus({ loading: false, result });
+      setStatus({
+        kind: "success",
+        text: result.hasUpdate
+          ? `发现新版本 ${result.latestVersion}`
+          : `当前已是最新版本 ${result.currentVersion}`,
+      });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      setUpdateStatus({ loading: false, error });
+      setStatus({ kind: "error", text: `检查更新失败：${error}` });
+    }
+  }
+
+  function handleOpenUpdateUrl() {
+    const url = updateStatus.result?.downloadUrl || updateStatus.result?.releaseUrl;
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  function handleExportSettings() {
+    const exportFile = createSettingsExport(settingsWithKeys());
+    downloadText(
+      JSON.stringify(exportFile, null, 2),
+      `transloop-settings-${new Date().toISOString().slice(0, 10)}.json`,
+    );
+    setStatus({ kind: "success", text: "设置已导出（不含 API Key）" });
+  }
+
+  async function handleImportSettings() {
+    try {
+      const text = await pickTextFile();
+      const imported = parseImportedSettings(text);
+      const next: AppSettings = {
+        ...imported,
+        apiKey: keyMap[imported.provider] ?? (await getProviderKey(imported.provider)),
+        recognizeApiKey:
+          keyMap[imported.recognizeProvider] ??
+          (await getProviderKey(imported.recognizeProvider)),
+      };
+      await saveSettings(next);
+      await invoke("reload_shortcuts");
+      setDraft(next);
+      onSaved(next);
+      setStatus({
+        kind: "success",
+        text: "设置已导入并生效，API Key 仍需在本机 keyring 中配置。",
+      });
+      await logDiagnosticEvent({
+        level: "info",
+        category: "settings",
+        message: "导入设置成功",
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setStatus({ kind: "error", text: `导入设置失败：${message}` });
+      await logDiagnosticEvent({
+        level: "error",
+        category: "settings",
+        message: "导入设置失败",
+        errorSummary: message,
+      });
+    }
+  }
+
+  async function handleExportDiagnostics() {
+    const ok = window.confirm(
+      "诊断包会包含脱敏设置、诊断日志、用量汇总和环境检测结果；不会包含 API Key、原文、译文、截图或历史正文。是否继续？",
+    );
+    if (!ok) return;
+    try {
+      const blob = await createDiagnosticPackage(settingsWithKeys());
+      downloadBlob(blob, `transloop-diagnostics-${new Date().toISOString().slice(0, 10)}.zip`);
+      setStatus({ kind: "success", text: "诊断包已导出。" });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setStatus({ kind: "error", text: `导出诊断包失败：${message}` });
+      await logDiagnosticEvent({
+        level: "error",
+        category: "diagnostics",
+        message: "导出诊断包失败",
+        errorSummary: message,
+      });
+    }
   }
 
   if (!open) return null;
@@ -617,6 +730,68 @@ export function SettingsModal({ open, initial, onClose, onSaved, onOpenUsage }: 
               ))}
             </div>
           </div>
+
+          <div className="field fallback-block">
+            <label className="toggle-row">
+              <span>启用诊断日志</span>
+              <input
+                type="checkbox"
+                checked={draft.diagnosticLoggingEnabled}
+                onChange={(e) => update("diagnosticLoggingEnabled", e.target.checked)}
+              />
+              <span className="toggle" />
+            </label>
+            <span className="hint">
+              仅记录运行状态、Provider/模型、耗时和错误摘要；不记录 API Key、原文、译文或截图。
+            </span>
+          </div>
+
+          <div className="field fallback-block">
+            <label>产品化工具</label>
+            <div className="settings-actions">
+              <button className="ghost" onClick={handleCheckUpdate} disabled={updateStatus.loading}>
+                {updateStatus.loading ? "检查中..." : "检查更新"}
+              </button>
+              <button className="ghost" onClick={handleExportDiagnostics}>
+                导出诊断包
+              </button>
+              <button className="ghost" onClick={handleExportSettings}>
+                导出设置
+              </button>
+              <button className="ghost" onClick={handleImportSettings}>
+                导入设置
+              </button>
+              {onOpenOnboarding && (
+                <button className="ghost" onClick={onOpenOnboarding}>
+                  打开首次引导
+                </button>
+              )}
+            </div>
+            <span className="hint">
+              当前版本 <code>{APP_VERSION}</code>。设置导出不含 API Key；导入后如缺 Key，请在本页重新填写。
+            </span>
+            {updateStatus.result && (
+              <div className="update-result">
+                <strong>
+                  {updateStatus.result.hasUpdate
+                    ? `发现新版本 ${updateStatus.result.latestVersion}`
+                    : "当前已是最新版本"}
+                </strong>
+                <span>
+                  当前 {updateStatus.result.currentVersion}
+                  {updateStatus.result.publishedAt
+                    ? ` · 发布于 ${new Date(updateStatus.result.publishedAt).toLocaleDateString()}`
+                    : ""}
+                </span>
+                {updateStatus.result.hasUpdate && (
+                  <button className="text-btn" onClick={handleOpenUpdateUrl}>
+                    下载新版安装包
+                  </button>
+                )}
+              </div>
+            )}
+            {updateStatus.error && <span className="status error">{updateStatus.error}</span>}
+          </div>
         </div>
 
         <div className="modal-footer">
@@ -657,4 +832,21 @@ export async function loadOrDefault(): Promise<AppSettings> {
   } catch {
     return DEFAULT_SETTINGS;
   }
+}
+
+function pickTextFile(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json,.json";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) {
+        reject(new Error("未选择文件。"));
+        return;
+      }
+      file.text().then(resolve).catch(reject);
+    };
+    input.click();
+  });
 }

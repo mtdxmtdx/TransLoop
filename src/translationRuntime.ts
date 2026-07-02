@@ -11,6 +11,7 @@ import {
   type UsageEntryKind,
   type UsageStatus,
 } from "./usage";
+import { logDiagnosticEvent } from "./diagnostics";
 
 export type ProviderErrorKind =
   | "missing_key"
@@ -129,6 +130,17 @@ export async function runTextTranslation(
         errorSummary: "API Key 未配置，已跳过该候选。",
       });
       attempts.push(attempt);
+      if (options.settings.diagnosticLoggingEnabled) {
+        await logDiagnosticEvent({
+          level: "warn",
+          category: "provider",
+          message: "Provider 候选因缺少 API Key 被跳过",
+          provider: candidate.provider,
+          model: candidate.model,
+          errorKind: "missing_key",
+          errorSummary: attempt.errorSummary,
+        });
+      }
       lastError = new Error(attempt.errorSummary);
       continue;
     }
@@ -173,7 +185,18 @@ export async function runTextTranslation(
           fromLang: direction.fromLang,
           toLang: direction.toLang,
           translation: result,
-        }).catch(() => {});
+        }).catch((e) => {
+          if (options.settings.diagnosticLoggingEnabled) {
+            logDiagnosticEvent({
+              level: "warn",
+              category: "cache",
+              message: "翻译缓存写入失败",
+              provider: candidate.provider,
+              model: candidate.model,
+              errorSummary: e instanceof Error ? e.message : String(e),
+            });
+          }
+        });
       }
       return {
         text: result,
@@ -206,6 +229,18 @@ export async function runTextTranslation(
         errorSummary: error.summary,
       });
       attempts.push(attempt);
+      if (options.settings.diagnosticLoggingEnabled) {
+        await logDiagnosticEvent({
+          level: "error",
+          category: "provider",
+          message: "文本翻译 Provider 请求失败",
+          provider: candidate.provider,
+          model: candidate.model,
+          durationMs,
+          errorKind: error.kind,
+          errorSummary: error.summary,
+        });
+      }
       lastError = new Error(`${candidate.provider}/${candidate.model}: ${error.summary}`);
     }
   }
@@ -249,6 +284,17 @@ export async function runImageTranslation(
         errorSummary,
       });
       attempts.push(attempt);
+      if (options.settings.diagnosticLoggingEnabled) {
+        await logDiagnosticEvent({
+          level: errorKind === "missing_key" ? "warn" : "info",
+          category: "provider",
+          message: "图片翻译候选被跳过",
+          provider: candidate.provider,
+          model: candidate.model,
+          errorKind,
+          errorSummary,
+        });
+      }
       lastError = new Error(errorSummary);
       continue;
     }
@@ -311,6 +357,18 @@ export async function runImageTranslation(
         errorSummary: error.summary,
       });
       attempts.push(attempt);
+      if (options.settings.diagnosticLoggingEnabled) {
+        await logDiagnosticEvent({
+          level: "error",
+          category: "provider",
+          message: "图片翻译 Provider 请求失败",
+          provider: candidate.provider,
+          model: candidate.model,
+          durationMs: attempt.durationMs,
+          errorKind: error.kind,
+          errorSummary: error.summary,
+        });
+      }
       lastError = new Error(`${candidate.provider}/${candidate.model}: ${error.summary}`);
     }
   }
@@ -621,6 +679,9 @@ function createMinimalSettings(candidate: RuntimeCandidate): AppSettings {
     smartPrimaryTargetLang: "zh",
     smartAlternateTargetLang: "en",
     translationCacheEnabled: false,
+    onboardingCompleted: true,
+    lastUpdateCheckAt: undefined,
+    diagnosticLoggingEnabled: true,
   };
 }
 

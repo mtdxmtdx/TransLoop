@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   DEFAULT_SETTINGS,
   loadSettings,
@@ -9,6 +10,7 @@ import { SettingsModal } from "./SettingsModal";
 import { HistoryPanel } from "./HistoryPanel";
 import { UsagePanel } from "./UsagePanel";
 import { runTextTranslation } from "./translationRuntime";
+import { OnboardingModal } from "./OnboardingModal";
 
 const LANG_OPTIONS = [
   { value: "auto", label: "自动检测" },
@@ -38,6 +40,7 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showUsage, setShowUsage] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   const [input, setInput] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -49,6 +52,7 @@ export function App() {
     loadSettings()
       .then((s) => {
         setSettings(s);
+        if (!s.onboardingCompleted) setShowOnboarding(true);
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
@@ -289,9 +293,20 @@ export function App() {
           setSettings(next);
         }}
         onOpenUsage={() => setShowUsage(true)}
+        onOpenOnboarding={() => setShowOnboarding(true)}
       />
       <HistoryPanel open={showHistory} onClose={() => setShowHistory(false)} />
       <UsagePanel open={showUsage} onClose={() => setShowUsage(false)} />
+      <OnboardingModal
+        open={showOnboarding}
+        initial={settings}
+        onClose={() => setShowOnboarding(false)}
+        onComplete={(next) => {
+          setSettings(next);
+          setShowOnboarding(false);
+          invoke("reload_shortcuts").catch(() => {});
+        }}
+      />
     </div>
   );
 }

@@ -33,7 +33,8 @@
         { "url": "https://dashscope.aliyuncs.com/*" },
         { "url": "https://dashscope-intl.aliyuncs.com/*" },
         { "url": "https://api.x.ai/*" },
-        { "url": "https://api.minimax.chat/*" }
+        { "url": "https://api.minimax.chat/*" },
+        { "url": "https://api.github.com/*" }
       ]
     }
   ]

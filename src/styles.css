@@ -1123,6 +1123,98 @@ body.overlay-body {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.update-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.update-result span {
+  color: var(--text-muted);
+}
+
+.onboarding-panel {
+  width: min(680px, 94vw);
+  max-height: min(620px, 92vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--bg-elev);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.onboarding-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.onboarding-header h2,
+.onboarding-step h3 {
+  margin: 0;
+}
+
+.onboarding-header h2 {
+  font-size: 18px;
+}
+
+.onboarding-header p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.onboarding-steps {
+  display: flex;
+  gap: 6px;
+  padding-top: 7px;
+}
+
+.onboarding-steps span {
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+
+.onboarding-steps span.active {
+  background: var(--accent);
+}
+
+.onboarding-body {
+  overflow: auto;
+  padding: 18px 20px 8px;
+}
+
+.onboarding-step {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.onboarding-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+}
+
 .usage-panel {
   width: min(1080px, calc(100vw - 28px));
   max-height: min(760px, calc(100vh - 28px));
