@@ -331,16 +331,23 @@ export function SettingsModal({
       if (blob.size === 0) {
         throw new Error("下载内容为空。");
       }
-      downloadBlob(blob, result.downloadFileName || `TransLoop_${result.latestVersion}_x64-setup.exe`);
+      const fileName =
+        result.downloadFileName || `TransLoop_${result.latestVersion}_x64-setup.exe`;
+      setDownloadStatus({ kind: "downloading", text: "下载完成，正在启动安装程序..." });
+      const dataBase64 = await blobToBase64(blob);
+      const savedPath = await invoke<string>("save_and_launch_installer", {
+        fileName,
+        dataBase64,
+      });
       const sizeMb = (blob.size / 1024 / 1024).toFixed(1);
       setDownloadStatus({
         kind: "success",
-        text: `安装包已下载：${result.downloadFileName}（${sizeMb} MB）`,
+        text: `安装包已下载并启动：${fileName}（${sizeMb} MB）`,
       });
       await logDiagnosticEvent({
         level: "info",
         category: "update",
-        message: `安装包下载完成：${result.downloadFileName}`,
+        message: `安装包下载并启动完成：${fileName} -> ${savedPath}`,
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -921,5 +928,17 @@ function pickTextFile(): Promise<string> {
       file.text().then(resolve).catch(reject);
     };
     input.click();
+  });
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result ?? "");
+      resolve(value.includes(",") ? value.split(",").pop() ?? "" : value);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("读取安装包数据失败。"));
+    reader.readAsDataURL(blob);
   });
 }

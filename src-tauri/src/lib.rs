@@ -7,7 +7,7 @@ mod shortcut;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Serialize;
 use serde_json::Value;
-use std::process::Command;
+use std::{fs, path::Path, process::Command};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -244,6 +244,34 @@ async fn diagnostic_snapshot(app: AppHandle) -> Result<DiagnosticSnapshot, Strin
     })
 }
 
+#[tauri::command]
+async fn save_and_launch_installer(file_name: String, data_base64: String) -> Result<String, String> {
+    let safe_name = Path::new(&file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| "安装包文件名无效。".to_string())?;
+    if !safe_name.to_ascii_lowercase().ends_with(".exe") {
+        return Err("安装包文件名必须以 .exe 结尾。".to_string());
+    }
+
+    let bytes = STANDARD
+        .decode(data_base64.trim())
+        .map_err(|e| format!("安装包数据解码失败: {e}"))?;
+    if bytes.is_empty() {
+        return Err("安装包数据为空。".to_string());
+    }
+
+    let dir = std::env::temp_dir().join("TransLoop").join("updates");
+    fs::create_dir_all(&dir).map_err(|e| format!("创建更新目录失败: {e}"))?;
+    let path = dir.join(safe_name);
+    fs::write(&path, bytes).map_err(|e| format!("保存安装包失败: {e}"))?;
+    Command::new(&path)
+        .spawn()
+        .map_err(|e| format!("启动安装包失败: {e}"))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出 TransLoop", true, None::<&str>)?;
@@ -371,7 +399,8 @@ pub fn run() {
             delete_secret,
             get_autostart_status,
             set_autostart,
-            diagnostic_snapshot
+            diagnostic_snapshot,
+            save_and_launch_installer
         ])
         .run(tauri::generate_context!())
         .expect("error while running TransLoop");
