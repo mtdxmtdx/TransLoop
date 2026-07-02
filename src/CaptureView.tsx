@@ -55,9 +55,22 @@ const OCR_MODE_LABEL: Record<string, string> = {
   C: "Tesseract OCR",
 };
 
+const TARGET_LANG_OPTIONS = [
+  { value: "zh", label: "中文" },
+  { value: "zh-TW", label: "繁中" },
+  { value: "en", label: "英文" },
+  { value: "ja", label: "日文" },
+  { value: "ko", label: "韩文" },
+  { value: "fr", label: "法文" },
+  { value: "de", label: "德文" },
+  { value: "es", label: "西语" },
+  { value: "ru", label: "俄文" },
+];
+
 export function CaptureView() {
   const [crop, setCrop] = useState<string>("");
   const [state, setState] = useState<ViewState>({ kind: "idle" });
+  const [targetLang, setTargetLang] = useState("zh");
   const runSeq = useRef(0);
 
   async function translateRecognizedText(
@@ -65,16 +78,21 @@ export function CaptureView() {
     settings: Awaited<ReturnType<typeof loadSettings>>,
     seq: number,
     imagePreview?: string,
+    targetOverride?: string,
   ) {
+    const effectiveSettings = targetOverride
+      ? { ...settings, toLang: targetOverride, smartDirectionEnabled: false }
+      : settings;
+    setTargetLang(effectiveSettings.toLang);
     setState({ kind: "running", stage: "翻译中…" });
     const result = await runTextTranslation(
       text,
-      settings.fromLang,
-      settings.toLang,
+      effectiveSettings.fromLang,
+      effectiveSettings.toLang,
       {
-        settings,
+        settings: effectiveSettings,
         entryKind: "capture",
-        ocrMode: settings.ocrMode,
+        ocrMode: effectiveSettings.ocrMode,
         onChunk: (_d, full) => {
           if (runSeq.current !== seq) return;
           setState({ kind: "result", original: text, translation: full });
@@ -92,7 +110,7 @@ export function CaptureView() {
       toLang: result.toLang,
       provider: result.provider,
       model: result.model,
-      ocrMode: settings.ocrMode,
+      ocrMode: effectiveSettings.ocrMode,
       imagePreview,
     }).catch(() => {});
   }
@@ -103,6 +121,7 @@ export function CaptureView() {
     setState({ kind: "running", stage: "识别中…" });
     try {
       const settings = await loadSettings();
+      setTargetLang(settings.toLang);
       const imagePreview = await makeImagePreview(dataUrl);
       if (settings.ocrMode === "A") {
         if (settings.visionCollab) {
@@ -243,7 +262,7 @@ export function CaptureView() {
     try {
       const settings = await loadSettings();
       const imagePreview = crop ? await makeImagePreview(crop) : undefined;
-      await translateRecognizedText(original, settings, seq, imagePreview);
+      await translateRecognizedText(original, settings, seq, imagePreview, targetLang);
     } catch (e) {
       if (runSeq.current !== seq) return;
       const message = e instanceof Error ? e.message : String(e);
@@ -266,6 +285,25 @@ export function CaptureView() {
   function updateOriginal(next: string) {
     if (state.kind !== "result") return;
     setState({ ...state, original: next });
+  }
+
+  async function handleTargetLangChange(next: string) {
+    setTargetLang(next);
+    if (state.kind !== "result") return;
+    const original = state.original.trim();
+    if (!original) return;
+    const seq = ++runSeq.current;
+    try {
+      const settings = await loadSettings();
+      const imagePreview = crop ? await makeImagePreview(crop) : undefined;
+      await translateRecognizedText(original, settings, seq, imagePreview, next);
+    } catch (e) {
+      if (runSeq.current !== seq) return;
+      setState({
+        kind: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   return (
@@ -332,9 +370,23 @@ export function CaptureView() {
           <div className="capture-pane-title">
             <span>译文</span>
             {state.kind === "result" && (
-              <button className="text-btn" onClick={copyTranslation}>
-                复制译文
-              </button>
+              <div className="capture-actions">
+                <select
+                  className="popup-lang-select capture-lang-select"
+                  value={targetLang}
+                  onChange={(e) => handleTargetLangChange(e.target.value)}
+                  title="目标语言"
+                >
+                  {TARGET_LANG_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <button className="text-btn" onClick={copyTranslation}>
+                  复制译文
+                </button>
+              </div>
             )}
           </div>
           <div className="capture-pane-body">

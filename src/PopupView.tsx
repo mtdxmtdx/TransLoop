@@ -68,7 +68,9 @@ export function Popup() {
     setState({ kind: "loading", source: payload.text });
     try {
       const settings = await loadSettings();
-      const effectiveSettings = targetOverride ? { ...settings, toLang: targetOverride } : settings;
+      const effectiveSettings = targetOverride
+        ? { ...settings, toLang: targetOverride, smartDirectionEnabled: false }
+        : settings;
       setTargetLang(effectiveSettings.toLang);
       const result = await runTextTranslation(
         payload.text,

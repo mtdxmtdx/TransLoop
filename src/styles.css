@@ -1353,6 +1353,16 @@ body.overlay-body {
   font-size: 12px;
 }
 
+.popup-lang-select option {
+  background: #2a2a2e;
+  color: #f2f2f7;
+}
+
+.capture-lang-select {
+  min-width: 82px;
+  color: #f2f2f7;
+}
+
 .usage-empty {
   height: 160px;
   color: var(--muted);
