@@ -8,6 +8,7 @@ export interface UpdateCheckResult {
   hasUpdate: boolean;
   releaseUrl: string;
   downloadUrl: string;
+  downloadFileName: string;
   publishedAt: string;
   notes: string;
 }
@@ -36,13 +37,15 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
     const release = (await response.json()) as GitHubRelease;
     const latestVersion = normalizeVersion(release.tag_name ?? "");
     if (!latestVersion) throw new Error("未能解析最新版本号。");
-    const downloadUrl = pickDownloadUrl(release) ?? release.html_url ?? GITHUB_RELEASES_URL;
+    const asset = pickDownloadAsset(release);
+    const downloadUrl = asset?.browser_download_url ?? release.html_url ?? GITHUB_RELEASES_URL;
     const result: UpdateCheckResult = {
       currentVersion: APP_VERSION,
       latestVersion,
       hasUpdate: compareVersions(latestVersion, APP_VERSION) > 0,
       releaseUrl: release.html_url ?? GITHUB_RELEASES_URL,
       downloadUrl,
+      downloadFileName: asset?.name ?? `TransLoop_${latestVersion}_x64-setup.exe`,
       publishedAt: release.published_at ?? "",
       notes: release.body ?? "",
     };
@@ -66,12 +69,14 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
   }
 }
 
-function pickDownloadUrl(release: GitHubRelease): string | undefined {
+function pickDownloadAsset(
+  release: GitHubRelease,
+): { name?: string; browser_download_url?: string } | undefined {
   const assets = release.assets ?? [];
   return (
-    assets.find((asset) => asset.name?.toLowerCase().endsWith(".exe"))?.browser_download_url ??
-    assets.find((asset) => asset.name?.toLowerCase().includes("setup"))?.browser_download_url ??
-    assets[0]?.browser_download_url
+    assets.find((asset) => asset.name?.toLowerCase().endsWith(".exe")) ??
+    assets.find((asset) => asset.name?.toLowerCase().includes("setup")) ??
+    assets[0]
   );
 }
 

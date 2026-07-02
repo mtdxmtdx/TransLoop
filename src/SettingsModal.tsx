@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { fetch } from "@tauri-apps/plugin-http";
 import {
   DEFAULT_SETTINGS,
   getProviderKey,
@@ -72,6 +73,10 @@ export function SettingsModal({
     result?: UpdateCheckResult;
     error?: string;
   }>({ loading: false });
+  const [downloadStatus, setDownloadStatus] = useState<{
+    kind: "idle" | "downloading" | "success" | "error";
+    text: string;
+  }>({ kind: "idle", text: "" });
 
   useEffect(() => {
     if (!open) return;
@@ -79,6 +84,7 @@ export function SettingsModal({
     setStatus({ kind: "idle", text: "" });
     setTestStatus({});
     setUpdateStatus({ loading: false });
+    setDownloadStatus({ kind: "idle", text: "" });
     // 加载开机自启动状态
     invoke<boolean>("get_autostart_status")
       .then(setAutostart)
@@ -306,8 +312,53 @@ export function SettingsModal({
     }
   }
 
-  function handleOpenUpdateUrl() {
-    const url = updateStatus.result?.downloadUrl || updateStatus.result?.releaseUrl;
+  async function handleDownloadUpdate() {
+    const result = updateStatus.result;
+    if (!result?.downloadUrl) {
+      setDownloadStatus({ kind: "error", text: "没有可用的下载地址，请重新检查更新。" });
+      return;
+    }
+    setDownloadStatus({ kind: "downloading", text: "正在下载安装包..." });
+    try {
+      const response = await fetch(result.downloadUrl, {
+        method: "GET",
+        headers: { Accept: "application/octet-stream" },
+      });
+      if (!response.ok) {
+        throw new Error(`下载请求失败（${response.status}）`);
+      }
+      const blob = await response.blob();
+      if (blob.size === 0) {
+        throw new Error("下载内容为空。");
+      }
+      downloadBlob(blob, result.downloadFileName || `TransLoop_${result.latestVersion}_x64-setup.exe`);
+      const sizeMb = (blob.size / 1024 / 1024).toFixed(1);
+      setDownloadStatus({
+        kind: "success",
+        text: `安装包已下载：${result.downloadFileName}（${sizeMb} MB）`,
+      });
+      await logDiagnosticEvent({
+        level: "info",
+        category: "update",
+        message: `安装包下载完成：${result.downloadFileName}`,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setDownloadStatus({
+        kind: "error",
+        text: `下载失败：${message}。可打开发布页手动下载。`,
+      });
+      await logDiagnosticEvent({
+        level: "error",
+        category: "update",
+        message: "安装包下载失败",
+        errorSummary: message,
+      });
+    }
+  }
+
+  function handleOpenReleasePage() {
+    const url = updateStatus.result?.releaseUrl;
     if (url) window.open(url, "_blank", "noopener,noreferrer");
   }
 
@@ -784,9 +835,31 @@ export function SettingsModal({
                     : ""}
                 </span>
                 {updateStatus.result.hasUpdate && (
-                  <button className="text-btn" onClick={handleOpenUpdateUrl}>
-                    下载新版安装包
-                  </button>
+                  <div className="update-actions">
+                    <button
+                      className="text-btn"
+                      onClick={handleDownloadUpdate}
+                      disabled={downloadStatus.kind === "downloading"}
+                    >
+                      {downloadStatus.kind === "downloading" ? "下载中..." : "下载新版安装包"}
+                    </button>
+                    <button className="text-btn" onClick={handleOpenReleasePage}>
+                      打开发布页
+                    </button>
+                  </div>
+                )}
+                {downloadStatus.text && (
+                  <span
+                    className={
+                      downloadStatus.kind === "error"
+                        ? "status error"
+                        : downloadStatus.kind === "success"
+                          ? "status success"
+                          : "status"
+                    }
+                  >
+                    {downloadStatus.text}
+                  </span>
                 )}
               </div>
             )}

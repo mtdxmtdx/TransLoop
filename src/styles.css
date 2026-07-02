@@ -1144,6 +1144,12 @@ body.overlay-body {
   color: var(--text-muted);
 }
 
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .onboarding-panel {
   width: min(680px, 94vw);
   max-height: min(620px, 92vh);
