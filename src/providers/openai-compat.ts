@@ -230,25 +230,142 @@ export async function readSSE(
 /** Parse the vision model's reply into {original, translation}, tolerant of
  *  markdown fences and non-JSON fallbacks. */
 export function parseVisionContent(content: string): VisionResult {
-  const cleaned = content
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
+  const cleaned = stripMarkdownFence(content);
   try {
-    const obj = JSON.parse(cleaned) as {
-      original?: unknown;
-      translation?: unknown;
-    };
-    const original = typeof obj.original === "string" ? obj.original : "";
-    const translation =
-      typeof obj.translation === "string" ? obj.translation : "";
-    if (translation || original) {
-      return { original, translation: translation || cleaned };
+    const parsed = JSON.parse(cleaned) as unknown;
+    if (isRecord(parsed)) {
+      const original = textField(parsed, ["original", "source", "text"]);
+      const translation = textField(parsed, ["translation", "translated", "target"]);
+      if (translation || original) {
+        return {
+          original: normalizeRecognizedText(original),
+          translation: normalizeRecognizedText(translation || cleaned),
+        };
+      }
+    }
+    if (Array.isArray(parsed)) {
+      const original = textFromStructuredJson(parsed);
+      if (original) {
+        return { original, translation: cleaned };
+      }
     }
   } catch {
     /* not JSON — fall through */
   }
   // Fallback: treat the whole reply as the translation.
   return { original: "", translation: cleaned };
+}
+
+/** Normalize OCR text returned by vision models.
+ *
+ * Some models ignore the pure-text instruction and return layout-oriented
+ * JSON/HTML. This function extracts only the human-readable source text.
+ */
+export function normalizeRecognizedText(content: string): string {
+  const cleaned = stripMarkdownFence(content);
+  if (!cleaned) return "";
+
+  const parsed = tryParseJsonLike(cleaned);
+  if (parsed !== undefined) {
+    const fromJson = textFromStructuredJson(parsed);
+    if (fromJson) return normalizePlainText(fromJson);
+  }
+
+  if (looksLikeHtml(cleaned)) {
+    const fromHtml = htmlToText(cleaned);
+    if (fromHtml) return normalizePlainText(fromHtml);
+  }
+
+  return normalizePlainText(cleaned);
+}
+
+function stripMarkdownFence(content: string): string {
+  return content
+    .trim()
+    .replace(/^```(?:json|html|text)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+function tryParseJsonLike(content: string): unknown | undefined {
+  try {
+    return JSON.parse(content);
+  } catch {
+    const snippet = extractJsonSnippet(content);
+    if (!snippet) return undefined;
+    try {
+      return JSON.parse(snippet);
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+function extractJsonSnippet(content: string): string | undefined {
+  const starts = [content.indexOf("{"), content.indexOf("[")]
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b);
+  const start = starts[0];
+  if (start === undefined) return undefined;
+  const open = content[start];
+  const close = open === "{" ? "}" : "]";
+  const end = content.lastIndexOf(close);
+  if (end <= start) return undefined;
+  return content.slice(start, end + 1).trim();
+}
+
+function textFromStructuredJson(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => textFromStructuredJson(item))
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (!isRecord(value)) return "";
+
+  const direct = textField(value, ["original", "source", "text", "content"]);
+  if (direct) return direct;
+
+  const nested = ["lines", "words", "items", "blocks", "paragraphs"]
+    .map((key) => textFromStructuredJson(value[key]))
+    .filter(Boolean)
+    .join("\n");
+  return nested;
+}
+
+function textField(value: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const item = value[key];
+    if (typeof item === "string" && item.trim()) return item;
+  }
+  return "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function looksLikeHtml(content: string): boolean {
+  return /<\/?[a-z][\s\S]*>/i.test(content);
+}
+
+function htmlToText(html: string): string {
+  const withBreaks = html
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\s*\/\s*(p|div|li|h[1-6]|tr|section|article|body|html)\s*>/gi, "\n");
+  const stripped = withBreaks.replace(/<[^>]+>/g, " ");
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = stripped;
+  return textarea.value;
+}
+
+function normalizePlainText(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 }

@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { loadSettings } from "./store";
 import { createProvider } from "./providers";
+import { normalizeRecognizedText } from "./providers/openai-compat";
 import { addHistory } from "./history";
 import { runImageTranslation, runTextTranslation } from "./translationRuntime";
 import { logDiagnosticEvent } from "./diagnostics";
@@ -136,9 +137,9 @@ export function CaptureView() {
               "识别模型不支持图片输入。请在设置中将「识别模型」改为 OpenAI / Qwen-VL / Grok。",
             );
           }
-          const recognized = (
-            await recognizer.recognizeImage(dataUrl, settings.fromLang)
-          ).trim();
+          const recognized = normalizeRecognizedText(
+            await recognizer.recognizeImage(dataUrl, settings.fromLang),
+          );
           if (runSeq.current !== seq) return;
           if (!recognized) {
             setState({
