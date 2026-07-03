@@ -11,6 +11,7 @@ import { HistoryPanel } from "./HistoryPanel";
 import { UsagePanel } from "./UsagePanel";
 import { runTextTranslation } from "./translationRuntime";
 import { OnboardingModal } from "./OnboardingModal";
+import { toUserFacingError } from "./userFacingError";
 
 const LANG_OPTIONS = [
   { value: "auto", label: "自动检测" },
@@ -79,7 +80,7 @@ export function App() {
       if (requestSeqRef.current !== seq) return;
       setPhase({
         kind: "error",
-        message: e instanceof Error ? e.message : String(e),
+        message: toUserFacingError(e, "translation"),
       });
     }
   }

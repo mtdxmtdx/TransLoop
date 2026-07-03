@@ -22,6 +22,7 @@ import {
   parseImportedSettings,
 } from "./settingsTransfer";
 import { logDiagnosticEvent } from "./diagnostics";
+import { toUserFacingError } from "./userFacingError";
 
 interface Props {
   open: boolean;
@@ -216,7 +217,7 @@ export function SettingsModal({
       // 保存成功后自动关闭设置窗口；失败时保持打开以展示错误。
       onClose();
     } catch (e) {
-      setStatus({ kind: "error", text: `保存失败：${String(e)}` });
+      setStatus({ kind: "error", text: `保存失败：${toUserFacingError(e, "settings")}` });
     }
   }
 
@@ -283,7 +284,10 @@ export function SettingsModal({
       <span className={`status ${ok ? "success" : "error"}`}>
         {ok
           ? `连接成功：${attempt.provider} / ${attempt.model}，${attempt.durationMs}ms`
-          : `连接失败：${attempt.errorSummary ?? attempt.errorKind ?? "未知错误"}`}
+          : `连接失败：${toUserFacingError(
+              attempt.errorSummary ?? attempt.errorKind ?? "未知错误",
+              "provider_test",
+            )}`}
       </span>
     );
   }
@@ -306,7 +310,7 @@ export function SettingsModal({
           : `当前已是最新版本 ${result.currentVersion}`,
       });
     } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
+      const error = toUserFacingError(e, "update");
       setUpdateStatus({ loading: false, error });
       setStatus({ kind: "error", text: `检查更新失败：${error}` });
     }
@@ -350,10 +354,10 @@ export function SettingsModal({
         message: `安装包下载并启动完成：${fileName} -> ${savedPath}`,
       });
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = toUserFacingError(e, "update");
       setDownloadStatus({
         kind: "error",
-        text: `下载失败：${message}。可打开发布页手动下载。`,
+        text: `${message} 可打开发布页手动下载。`,
       });
       await logDiagnosticEvent({
         level: "error",
@@ -403,7 +407,7 @@ export function SettingsModal({
         message: "导入设置成功",
       });
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = toUserFacingError(e, "settings");
       setStatus({ kind: "error", text: `导入设置失败：${message}` });
       await logDiagnosticEvent({
         level: "error",
@@ -424,7 +428,7 @@ export function SettingsModal({
       downloadBlob(blob, `transloop-diagnostics-${new Date().toISOString().slice(0, 10)}.zip`);
       setStatus({ kind: "success", text: "诊断包已导出。" });
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = toUserFacingError(e, "diagnostics");
       setStatus({ kind: "error", text: `导出诊断包失败：${message}` });
       await logDiagnosticEvent({
         level: "error",

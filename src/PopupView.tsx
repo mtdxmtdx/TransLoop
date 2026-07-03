@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { loadSettings } from "./store";
 import { addHistory } from "./history";
 import { runTextTranslation } from "./translationRuntime";
+import { toUserFacingError } from "./userFacingError";
 
 type ResizeDirection =
   | "North"
@@ -104,7 +105,7 @@ export function Popup() {
       setState({
         kind: "error",
         source: payload.text,
-        message: e instanceof Error ? e.message : String(e),
+        message: toUserFacingError(e, "translation"),
       });
     }
   }

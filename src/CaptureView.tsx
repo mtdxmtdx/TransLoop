@@ -8,6 +8,7 @@ import { normalizeRecognizedText } from "./providers/openai-compat";
 import { addHistory } from "./history";
 import { runImageTranslation, runTextTranslation } from "./translationRuntime";
 import { logDiagnosticEvent } from "./diagnostics";
+import { toUserFacingError } from "./userFacingError";
 
 interface CropPayload {
   dataUrl: string;
@@ -211,7 +212,7 @@ export function CaptureView() {
       if (runSeq.current !== seq) return;
       setState({
         kind: "error",
-        message: e instanceof Error ? e.message : String(e),
+        message: toUserFacingError(e, "ocr"),
       });
     }
   }
@@ -266,7 +267,7 @@ export function CaptureView() {
       await translateRecognizedText(original, settings, seq, imagePreview, targetLang);
     } catch (e) {
       if (runSeq.current !== seq) return;
-      const message = e instanceof Error ? e.message : String(e);
+      const message = toUserFacingError(e, "translation");
       const settings = await loadSettings().catch(() => null);
       if (settings?.diagnosticLoggingEnabled) {
         logDiagnosticEvent({
@@ -302,7 +303,7 @@ export function CaptureView() {
       if (runSeq.current !== seq) return;
       setState({
         kind: "error",
-        message: e instanceof Error ? e.message : String(e),
+        message: toUserFacingError(e, "translation"),
       });
     }
   }

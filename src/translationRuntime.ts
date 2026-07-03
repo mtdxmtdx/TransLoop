@@ -557,7 +557,11 @@ async function recordCacheHit(input: {
 function normalizeError(e: unknown): { kind: ProviderErrorKind; summary: string } {
   const raw = e instanceof Error ? e.message : String(e);
   const summary = raw.replace(/\s+/g, " ").trim().slice(0, 240) || "未知错误";
-  const status = Number(summary.match(/\((\d{3})\)/)?.[1] ?? NaN);
+  const status = Number(
+    summary.match(/\((\d{3})\)/)?.[1] ??
+      summary.match(/\b(?:http|status|code)\s*:?\s*(\d{3})\b/i)?.[1] ??
+      NaN,
+  );
   const lower = summary.toLowerCase();
 
   if (lower.includes("timeout") || summary.includes("超时")) {
@@ -569,7 +573,7 @@ function normalizeError(e: unknown): { kind: ProviderErrorKind; summary: string 
   if (summary.includes("不支持") || lower.includes("unsupported")) {
     return { kind: "unsupported", summary };
   }
-  if (status === 429 || lower.includes("rate limit")) {
+  if (status === 429 || lower.includes("rate limit") || lower.includes("too many requests")) {
     return { kind: "rate_limited", summary };
   }
   if (status >= 500) return { kind: "server_error", summary };
@@ -581,6 +585,8 @@ function normalizeError(e: unknown): { kind: ProviderErrorKind; summary: string 
     lower.includes("network") ||
     lower.includes("fetch") ||
     lower.includes("connection") ||
+    lower.includes("dns") ||
+    lower.includes("failed to connect") ||
     summary.includes("套接字")
   ) {
     return { kind: "network", summary };
