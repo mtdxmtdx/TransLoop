@@ -1,11 +1,88 @@
 # TransLoop（译环）
 
-桌面端翻译工具，Tauri 2 + React 18 + TypeScript。
+TransLoop 是一款面向 Windows 的桌面划词翻译与截图 OCR 翻译工具。它聚焦桌面端使用场景：在任意应用中选中文字快速翻译，或框选屏幕区域进行 OCR 识别与翻译。
 
-两种核心交互：
+## 下载
 
-1. **划词翻译**：任意应用选中文字 → 按快捷键（默认 `Alt+Q`）→ 光标旁弹出悬浮窗实时显示译文。
-2. **截图翻译**：按快捷键（默认 `Alt+S`）→ 框选屏幕区域 → 分屏窗口（左原文 / 右译文），支持流式。
+- 最新安装包请前往 [GitHub Releases](https://github.com/mtdxmtdx/TransLoop/releases)。
+- Windows x64 用户下载 `TransLoop_1.0.0_x64-setup.exe` 并运行安装。
+- 从 `0.9.0 RC` 升级到 `1.0.0` 时，设置、Provider API Key、历史记录、缓存和快捷键会继续保留在本机。
+
+## 核心功能
+
+- **划词翻译**：任意应用选中文字后按快捷键，光标旁弹出悬浮窗显示译文。
+- **截图翻译**：按快捷键框选屏幕区域，自动 OCR 并展示原文 / 译文分屏结果。
+- **多 Provider 支持**：支持 DeepSeek、OpenAI 兼容服务、Qwen、Grok、MiniMax、Claude、Gemini。
+- **自动降级与用量统计**：Provider 失败时可尝试备用模型 / Provider，并记录本地请求元数据。
+- **翻译历史与缓存**：保存最近翻译结果，短期复用重复翻译以减少请求。
+- **诊断与迁移**：支持脱敏诊断包导出、非密钥设置导入 / 导出、应用内检查新版本。
+
+## 快速开始
+
+1. 安装并启动 TransLoop。
+2. 首次引导中选择 Provider 和模型，并填写 API Key。
+3. 确认划词快捷键（默认 `Alt+Q`）和截图快捷键（默认 `Alt+S`）。
+4. 在任意应用选中文字后按 `Alt+Q` 使用划词翻译。
+5. 按 `Alt+S` 框选屏幕区域使用截图翻译。
+
+也可以随时点击主窗口右上角设置按钮调整 Provider、模型、OCR 模式、智能语言方向、缓存、自动降级和诊断选项。
+
+## 使用说明
+
+### 划词翻译
+
+在任意应用选中文字后按快捷键，TransLoop 会读取选区并在光标旁显示悬浮窗。悬浮窗支持拖拽、缩放、固定、目标语言快速切换、编辑原文后重新翻译、复制原文 / 译文、Esc 关闭。
+
+### 截图翻译
+
+按截图快捷键后拖拽框选屏幕区域，松开鼠标后进入截图翻译结果窗。结果窗左侧为原文，右侧为译文；原文可手动编辑后重新翻译，目标语言也可在结果窗中切换。
+
+### OCR 模式选择
+
+| 模式 | 原理 | 适合场景 | 注意事项 |
+|------|------|----------|----------|
+| A 单模型 | 多模态模型直接识别并翻译图片 | 复杂图片、中英文混排、希望一步完成 | 需要支持视觉的模型 |
+| A 协作 | 视觉模型先 OCR，再交给文本模型翻译 | 想组合不同识别和翻译 Provider | 会产生两次 API 调用 |
+| B Windows OCR | Windows.Media.Ocr 本地识别，再调用翻译模型 | 本地快速 OCR、隐私优先 | 依赖系统 OCR 语言包 |
+| C Tesseract | Tesseract 本地 OCR，再调用翻译模型 | Windows OCR 不可用时离线兜底 | 需安装 Tesseract 和语言包 |
+
+### 历史、缓存与用量
+
+- 「历史」保存划词和截图翻译结果，便于搜索、复制、删除和回看。
+- 翻译缓存保存原文哈希和译文，默认保留 24 小时 / 最多 1000 条。
+- 用量日志只记录请求元数据、状态、耗时、字符/token/费用估算和错误摘要，不保存原文、译文或截图。
+
+## 隐私与本地数据
+
+- API Key 按 Provider 分开存入系统 keyring，不写入设置文件。
+- 翻译历史会在本机保存原文和译文，用于历史查看。
+- 诊断日志、用量日志和诊断包不包含 API Key、原文、译文、截图或缓存译文正文。
+- 选择云端 Provider 时，要翻译的文本或截图内容会发送给对应服务商处理。
+- TransLoop 不提供云同步、团队统计或远程监控。
+
+更完整的说明见 [PRIVACY.md](PRIVACY.md)。
+
+## 常见问题
+
+### 提示未找到 Tesseract 怎么办？
+
+OCR 模式 C 依赖本机 Tesseract。请安装 Tesseract OCR，并确认 `tesseract` 命令在 PATH 中；也可以切换到 OCR 模式 A 或 B。
+
+### 当前 Provider 不支持图片输入怎么办？
+
+截图模式 A 需要支持视觉的模型。可改用 OpenAI / Claude / Gemini / Qwen-VL / Grok 等支持图片输入的模型，或切换到 OCR 模式 B/C。
+
+### API Key 会明文保存吗？
+
+不会。API Key 保存在系统 keyring 中，设置导出和诊断包不会包含 API Key。
+
+### 更新下载失败怎么办？
+
+设置页会保留「打开发布页」入口，可前往 GitHub Releases 手动下载安装包。
+
+### 用量统计是账单吗？
+
+不是。用量统计是本地估算，只用于观察请求趋势和大致成本，不代表服务商真实账单。
 
 ## 技术栈
 
@@ -14,11 +91,21 @@
 | 桌面框架 | Tauri 2 (Rust) |
 | 前端 | React 18 + TypeScript + Vite |
 | 前端插件 | plugin-global-shortcut, plugin-clipboard-manager, plugin-store, plugin-http |
-| Rust 依赖 | enigo（模拟按键）, xcap（屏幕截图）, windows（WinRT OCR）, keyring（OS 凭据管理器）, tokio, serde |
+| Rust 依赖 | enigo, xcap, windows, keyring, tokio, serde |
+
+## 开发
+
+```bash
+pnpm install
+pnpm tauri dev
+pnpm tauri build
+```
+
+若 `cargo install tauri-cli` 因权限或安全软件拦截失败，可使用项目内置的 `pnpm tauri ...`。
 
 ## 目录
 
-```
+```text
 TransLoop/
 ├── index.html                  # 主窗口入口
 ├── popup.html                  # 划词悬浮窗入口
@@ -26,105 +113,39 @@ TransLoop/
 ├── capture.html                # 截图翻译结果窗入口
 ├── src/
 │   ├── App.tsx                 # 主窗：双栏翻译器 + 工具栏
-│   ├── SettingsModal.tsx        # 设置弹窗（快捷键录制、模型配置、OCR 模式）
-│   ├── PopupView.tsx            # 划词悬浮窗（拖拽 / 缩放 / Esc 关闭）
-│   ├── OverlayView.tsx          # 框选蒙层（canvas 裁切 → finish_capture）
-│   ├── CaptureView.tsx          # 截图结果窗（分屏 + 模式 A/B 分流）
-│   ├── HotkeyInput.tsx          # 快捷键录制组件
-│   ├── store.ts                 # tauri-plugin-store 封装
-│   ├── styles.css
-│   └── providers/
-│       ├── types.ts             # TranslationProvider 接口 + PROVIDER_REGISTRY
-│       ├── openai-compat.ts     # OpenAI 兼容层（openai/qwen/grok/minimax；chatPath 选项）
-│       ├── deepseek.ts          # DeepSeek（文本 SSE 流式，含 thinking:disabled）
-│       ├── claude.ts            # Anthropic Claude（Messages API，x-api-key，content_block_delta）
-│       ├── gemini.ts            # Google Gemini（generateContent / streamGenerateContent，inlineData）
-│       ├── sse.ts               # 通用 SSE 行读取 + data: URL 拆分
-│       └── index.ts             # createProvider 工厂
+│   ├── SettingsModal.tsx        # 设置弹窗
+│   ├── PopupView.tsx            # 划词悬浮窗
+│   ├── OverlayView.tsx          # 框选蒙层
+│   ├── CaptureView.tsx          # 截图结果窗
+│   ├── translationRuntime.ts    # 统一翻译运行时
+│   ├── history.ts               # 翻译历史
+│   ├── usage.ts                 # 用量记录
+│   ├── diagnostics.ts           # 脱敏诊断日志
+│   └── providers/               # Provider 实现
 └── src-tauri/
     ├── tauri.conf.json
     ├── Cargo.toml
-    ├── capabilities/default.json
-    └── src/
-        ├── main.rs / lib.rs     # 入口、命令、托盘、窗口事件拦截
-        ├── shortcut.rs          # 解析并注册双全局快捷键
-        ├── selection.rs         # 释放修饰键 → 模拟 Ctrl+C → 轮询剪贴板
-        ├── popup.rs             # 光标附近展示悬浮窗
-        ├── capture.rs           # 截图 → PNG data: URL → overlay 定位
-        └── ocr.rs               # Windows.Media.Ocr WinRT 识别（模式 B）
+    └── src/                     # Rust 命令、托盘、截图、OCR、keyring
 ```
-
-## 开发
-
-```bash
-pnpm install
-pnpm tauri dev      # 开发模式（HMR）
-pnpm tauri build    # 生产构建
-```
-
-> 若 `cargo install tauri-cli` 因权限被杀软拦截，用项目内置的 `pnpm tauri ...` 即可，无需全局安装。
-
-## 使用
-
-### 初次设置
-
-1. 启动后点右上角 **⚙** 打开设置。
-2. 选择翻译提供方（默认 DeepSeek），填写 API Key。
-3. 可选：调整 Base URL / Model、修改快捷键（点击字段后直接按键录制）、选择 OCR 模式、开启多模型协作并配置识别模型。
-4. 保存后设置窗口自动关闭。
-
-### 划词翻译（`Alt+Q`）
-
-在任意应用选中文字 → 按快捷键 → 光标旁弹出悬浮窗显示流式译文。窗口可拖拽、缩放，原文区可手动编辑后重新翻译，并支持固定窗口、目标语言快速切换、复制原文 / 复制译文；点 × 或 Esc 关闭。
-
-### 截图翻译（`Alt+S`）
-
-按快捷键 → 拖拽框选屏幕区域 → 松开后自动进入翻译：
-
-- **模式 A**：多模态模型处理；协作模式下先识别再翻译。
-- **模式 B**：Windows 系统 OCR 识别 → 翻译模型翻译。
-- **模式 C**：Tesseract 本地 OCR 识别 → 翻译模型翻译（需本机安装 Tesseract）。
-
-分屏结果窗：左侧原文（可手动编辑并重新翻译），右侧译文（流式），顶栏显示截图缩略图，支持复制原文 / 复制译文，Esc 关闭。
-
-### 翻译历史
-
-主窗口右上角「历史」入口可查看最近的划词 / 截图翻译记录，支持搜索、查看完整原文和译文、复制原文 / 译文、删除单条记录和清空全部历史。截图翻译记录会保存缩略图、OCR 模式、Provider、模型和语言方向。
-
-### OCR 模式对比
-
-| 模式 | 原理 | 优势 | 局限 |
-|------|------|------|------|
-| A（单模型） | 多模态模型直接见图翻译 | 一步完成，准确率最高 | 需支持视觉的模型 |
-| A（协作） | 视觉模型 OCR → 文本模型翻译 | 可组合任意模型 | 两次 API 调用 |
-| B | Windows.Media.Ocr → 文本模型 | 离线免费，隐私安全 | 复杂排版效果一般 |
-| C | Tesseract 本地 OCR → 文本模型 | 离线兜底，可不依赖系统 OCR 语言包 | 需自行安装 Tesseract 和语言包 |
 
 ## 配置文件位置
 
-`%APPDATA%\com.transloop.app\settings.json`（Windows）
+Windows 默认数据目录：`%APPDATA%\com.transloop.app\`
 
-字段（不含密钥）：`hotkey`, `captureHotkey`, `provider`, `baseUrl`, `model`, `fromLang`, `toLang`, `streamOutput`, `ocrMode`, `visionCollab`, `recognizeProvider`, `recognizeBaseUrl`, `recognizeModel`, `fallbackEnabled`, `fallbackModels`, `fallbackProviderOrder`, `providerConfigs`, `smartDirectionEnabled`, `smartPrimaryTargetLang`, `smartAlternateTargetLang`, `translationCacheEnabled`, `onboardingCompleted`, `lastUpdateCheckAt`, `diagnosticLoggingEnabled`。API Key 按提供方分开保存在 OS keyring 中（`apikey.<provider>`），不在 settings.json 里落盘。
-
-`%APPDATA%\com.transloop.app\usage.json` 保存 Provider 请求元数据和用量估算，默认保留最近 90 天 / 最多 5000 条记录；不保存原文、译文或截图内容。
-
-`%APPDATA%\com.transloop.app\translation-cache.json` 保存短期翻译缓存，默认保留 24 小时 / 最多 1000 条；缓存保存原文哈希和译文，不保存原文正文。
-
-`%APPDATA%\com.transloop.app\diagnostics.json` 保存脱敏诊断日志，默认保留最近 14 天；只记录运行状态、Provider / 模型、耗时和错误摘要，不保存 API Key、原文、译文或截图。
-
-设置页可导出脱敏诊断包和非密钥设置文件。诊断包包含版本、平台、Tesseract 检测结果、脱敏设置、诊断日志和用量汇总；设置导出不包含 API Key，导入后如缺 Key 需要在本机重新填写。
+- `settings.json`：非密钥设置。
+- `history.json`：翻译历史，包含原文和译文。
+- `usage.json`：请求元数据和用量估算，不含正文。
+- `translation-cache.json`：短期缓存，保存原文哈希和译文。
+- `diagnostics.json`：脱敏诊断日志。
 
 ## 已知约束
 
-- 划词依赖剪贴板：会临时覆盖后恢复用户原有内容。个别 UIPI 保护的窗口可能漏读。
-- API Key 按提供方分别存入 OS keyring（Windows 凭据管理器），不在配置文件中落盘。
-- 用量统计仅为本地估算，不等同于服务商账单。
-- 智能语言方向使用轻量本地规则判断常见语言，不额外调用模型。
-- 截图捕获当前光标所在显示器（多屏环境以光标为准）。
-- OCR 模式 B 依赖系统已安装的语言包。
-- OCR 模式 C 依赖本机已安装 Tesseract OCR，并且 `tesseract` 命令可在 PATH 中调用。
-
----
+- 划词依赖剪贴板读取，个别受保护窗口可能漏读。
+- OCR 模式 B 依赖 Windows 系统 OCR 语言包。
+- OCR 模式 C 依赖 Tesseract OCR 和对应语言包。
+- 智能语言方向使用轻量本地规则，不额外调用模型。
+- 用量统计为本地估算，不等同于服务商账单。
+- 应用内更新为检查新版本、下载安装包并启动安装程序，不做静默自动更新。
 
 ## 路线图
 
@@ -138,24 +159,24 @@ pnpm tauri build    # 生产构建
 | 6 | Provider 连通性测试 + 备用模型降级 + 用量统计 | ✅ |
 | 7 | 划词悬浮窗增强 + 智能语言方向 + 翻译缓存 | ✅ |
 | 8 | 自动更新 + 首次启动引导 + 诊断日志 + 设置导入/导出 | ✅ |
-| 9 | 0.9.0 RC：正式版候选收尾 + 稳定性回归 + 发布验证 | 🚧 RC |
-| 10 | 1.0.0 正式版：仅修复 RC 反馈后的稳定版本 | ⏳ 规划中 |
+| 9 | 0.9.0 RC：正式版候选收尾 + 稳定性回归 + 发布验证 | ✅ |
+| 10 | 1.0.0 正式版：Windows 桌面翻译正式稳定版 | ✅ |
 
-### 后续计划
+## 后续计划
 
-- **取消浏览器插件方向**：TransLoop 后续聚焦桌面端划词翻译、截图翻译和本地 OCR 体验，不再维护浏览器插件路线。
-- **OCR 增强**：补充 OCR 模式 C/D，优先考虑 Tesseract 本地 OCR 或第三方 OCR API；截图结果尽量保留段落、换行、表格和代码块结构。
-- **翻译历史**：保存最近的划词和截图翻译结果，支持搜索、复制、删除，便于回看高频内容。
-- **划词体验**：悬浮窗增加固定、复制原文/译文、重新翻译、目标语言快速切换等操作。
-- **智能语言方向**：自动判断原文语言，例如中文转英文、英文转中文，减少手动切换。
-- **翻译缓存**：同一文本短时间内复用结果，降低 API 成本并提升响应速度。
-- **Provider 稳定性**：设置页增加连接测试；请求失败时支持备用 Provider/模型降级；记录每日请求次数和估算用量。
-- **产品化能力**：补充自动更新、首次启动引导、诊断日志、设置导入/导出，让安装包更适合长期使用。
-- **正式版节奏**：0.9.0 作为 RC 候选版，只做稳定性、文档、发布验证和体验兜底；1.0.0 在 RC 反馈修复后发布，不新增浏览器插件、云同步、团队统计或新 Provider。
-
----
+- `1.0.x`：只修复用户反馈、安装升级、OCR 异常和 Provider 错误提示。
+- `1.1.0`：优先增强 OCR 质量、段落恢复、表格 / 代码块结构保留。
+- `1.2.0`：考虑历史收藏、术语表、常用目标语言和复制格式优化。
+- 不恢复浏览器插件路线；不在 1.0.x 中加入云同步、团队统计或远程监控。
 
 ## 更新日志
+
+### 1.0.0 · 2026-07-09 — 正式版
+
+- **正式发布**：TransLoop 进入 Windows 桌面划词翻译与截图 OCR 翻译正式稳定版。
+- **文档正式化**：README 改为面向用户的下载、快速开始、核心功能、隐私和 FAQ 说明。
+- **隐私说明**：新增 `PRIVACY.md`，明确本地数据、Provider 请求、诊断包和设置导出的边界。
+- **发布检查**：新增 `docs/release-checklist-1.0.0.md`，覆盖构建、安装升级、核心回归、隐私和 GitHub Release 验证。
 
 ### 0.9.0 · 2026-07-03 — RC：正式版候选收尾
 
@@ -170,105 +191,4 @@ pnpm tauri build    # 生产构建
 - **结构化 OCR 兼容**：支持提取 `text`、`original`、`source`、`content` 等字段，避免 `rotate_rect` / HTML 标签直接出现在原文区域。
 - **识别 Prompt 加固**：纯 OCR 识别提示词明确禁止 JSON、HTML、Markdown、坐标框和结构化标签输出。
 
-### 0.8.3 · 2026-07-02 — 更新安装包自动启动
-
-- **自动启动安装程序**：更新安装包下载完成后保存到本机临时更新目录，并自动启动 `.exe` 安装程序。
-- **下载流程提示**：下载完成后会显示「正在启动安装程序」，成功后提示已下载并启动。
-- **安全校验**：安装包文件名会收敛为本地文件名，并要求以 `.exe` 结尾，避免写入异常路径。
-
-### 0.8.2 · 2026-07-02 — 更新下载状态反馈修复
-
-- **下载状态提示**：点击「下载新版安装包」后显示下载中、下载成功或下载失败原因，避免无反馈。
-- **安装包下载**：改为通过 Tauri HTTP 直接下载安装包文件，成功后触发本地保存。
-- **失败兜底**：下载失败时保留「打开发布页」入口，便于手动下载，并写入脱敏诊断日志。
-
-### 0.8.1 · 2026-07-02 — 划词与截图翻译目标语言体验修复
-
-- **划词翻译修复**：修复目标语言下拉选项白底白字导致无法分辨的问题。
-- **截图翻译增强**：截图翻译结果窗新增目标语言选择，切换后会基于当前可编辑原文重新翻译。
-- **手动语言优先**：划词和截图中手动选择目标语言时，会尊重用户选择，不再被智能语言方向覆盖。
-
-### 0.8.0 · 2026-07-02 — Stage 8：产品化收尾、更新检查、首次引导与诊断迁移
-
-- **更新检查**：设置页新增「检查更新」，从 GitHub Releases 获取最新版本、发布时间和下载地址；失败时写入脱敏诊断日志。
-- **首次启动引导**：新增三步引导，覆盖 Provider / API Key、快捷键 / OCR、智能语言方向 / 缓存隐私说明；设置页可重新打开。
-- **诊断日志**：新增本地 `diagnostics.json`，记录 Provider、OCR、更新检查、导入导出等错误摘要和运行元数据，不保存正文、截图或密钥。
-- **诊断包导出**：设置页可导出 zip 诊断包，包含版本、平台、Tesseract 检测结果、脱敏设置、诊断日志和用量汇总。
-- **设置导入/导出**：支持导出 / 导入非密钥设置，导入时会校验字段、合并默认值并重载快捷键；API Key 继续保存在系统 keyring 中。
-
-### 0.7.0 · 2026-07-01 — Stage 7：划词体验增强、智能语言方向与翻译缓存
-
-- **划词悬浮窗增强**：新增固定窗口和目标语言快速切换；固定后新的划词事件不会覆盖当前悬浮窗，语言切换会基于当前可编辑原文重新翻译。
-- **智能语言方向**：新增「默认翻译成」和「如果原文已是该语言，则翻译成」配置；源语言为自动检测时，中文默认转英文、英文默认转中文，也可自定义为英语转日语等组合。
-- **短期翻译缓存**：新增本地 `translation-cache.json`，同一原文哈希和同一语言方向在 24 小时内复用译文，减少重复 API 请求；缓存不保存原文正文。
-- **Runtime 集成**：统一翻译运行时会先解析智能语言方向，再查缓存，未命中时才进入 Provider/降级链路；缓存命中仍写入用量记录。
-- **用量面板增强**：新增缓存命中筛选、缓存命中次数和命中率统计，并在 CSV 导出中包含缓存和解析后语言方向字段。
-- **设置页增强**：新增智能语言方向、翻译缓存开关和清空缓存按钮。
-
-### 0.6.0 · 2026-07-01 — Stage 6：Provider 可观测性与自动降级
-
-- **Provider 连通性测试**：设置页新增翻译 Provider / 识别 Provider 测试按钮，展示成功状态、耗时、模型和错误摘要。
-- **统一翻译运行时**：主窗口、划词悬浮窗、截图 OCR 后翻译统一走 runtime 层，集中处理超时、错误归类、用量记录和降级。
-- **自动降级**：支持启用 / 关闭自动降级；请求失败时先尝试当前 Provider 的备用模型，再按配置顺序尝试备用 Provider，缺少 API Key 的候选会跳过并记录。
-- **图片直传降级**：截图模式 A 的一步 OCR+翻译会在备用 Provider 支持图片输入时继续降级；OCR 后文本翻译同样复用统一降级链路。
-- **用量与请求日志**：新增本地 `usage.json`，记录 Provider、模型、入口、状态、耗时、字符数、估算 token、估算费用和错误摘要，不保存原文 / 译文 / 截图。
-- **用量面板**：主窗口和设置页新增「用量」入口，支持 7/30/90 天统计、Provider / 入口 / 状态筛选、清空记录和导出 CSV。
-- **提示词注入加固**：文本翻译请求统一用固定分隔符包裹原文，系统 prompt 明确只翻译分隔符内内容，降低选中文本中的注入指令影响。
-
-### 0.5.0 · 2026-07-01 — Stage 5：OCR 增强与翻译历史
-
-- **OCR 模式 C**：新增 Tesseract 本地 OCR 兜底模式，支持通过本机 `tesseract` 命令离线识别，并自动查找默认安装目录和用户级 tessdata 目录。
-- **Windows OCR 结构化**：模式 B 从纯文本升级为结构化 OCR 结果，包含行、词和坐标信息，为段落恢复和后处理打基础。
-- **OCR 后处理**：截图识别结果会进行断行合并、段落恢复、列表符号归一化等基础整理，再交给翻译模型。
-- **截图翻译体验优化**：截图结果窗支持编辑原文后重新翻译，并提供复制原文 / 复制译文操作。
-- **划词翻译体验优化**：划词悬浮窗支持编辑原文后重新翻译，并提供复制原文 / 复制译文操作。
-- **翻译历史**：新增本地历史记录，自动保存划词和截图翻译结果；主窗口新增「历史」入口，支持搜索、查看、复制、删除单条记录和清空全部历史。
-
-### 0.4.2 · 2026-06-18 — 模型选择优化
-
-- **供应商/模型解耦**：下拉选择模型供应商（纯服务商名），Model 字段手动填写具体模型名。切换供应商自动填入常用默认值，可随意修改。
-- **自启动闪窗修复**：主窗改为默认隐藏（`visible: false`），setup 仅在非 minimized 时调用 `show()`，消除开机自启时窗口闪现。
-
-### 0.4.1 · 2026-06-07 — Stage 4 补丁
-
-- **翻译鲁棒性加固**：统一全部 4 个 Provider（DeepSeek / OpenAI 兼容族 / Claude / Gemini）的系统 prompt 为共享函数。强化「仅翻译、不作答」约束——即使划词选中的内容是题目、命令或问句，模型也逐字翻译而不会去解答或执行。截图翻译的 OCR+翻译和纯识别 prompt 同步加固。
-- **划词悬浮窗分栏调整**：译文与原文之间的分隔线支持鼠标拖动，可自由调整原文区域的显示高度，便于查看完整原文。
-- **公共函数抽取**：`describeLang`、`buildTranslateSystemPrompt`、`buildVisionTranslateSystemPrompt`、`buildVisionRecognizeSystemPrompt` 收归 `providers/types.ts`，消除 4 个 Provider 中的重复代码。
-- **自启动闪窗修复**：主窗改为默认隐藏（`visible: false`），setup 仅在非 minimized 时调用 `show()`。消除自启动时「窗口先闪现再隐藏」的时序问题。
-
-### 0.4.0 · 2026-05-30 — Stage 4
-
-- **开机自启动**：集成 `tauri-plugin-autostart`，支持在设置界面和系统托盘菜单中切换开机自启状态（Windows 通过注册表实现）。
-- **静默启动到托盘**：自启动时带 `--minimized` 参数，开机后静默驻留托盘，不弹出主窗口；手动启动则正常显示。
-- **系统托盘增强**：托盘菜单新增「开机自启动」勾选项（`CheckMenuItem`），切换时仅更新勾选态，不重建托盘（避免重复图标）。
-- **NSIS 安装包配置**：配置 Windows NSIS 安装包生成，支持当前用户安装模式（currentUser），提供中英文语言选择。
-- 版本号统一升至 `0.4.0`（`package.json` / `tauri.conf.json` / `Cargo.toml`）。
-
-### 0.3.0 · 2026-05-29 — Stage 3
-
-- **Claude 真实实现**：Anthropic Messages API，`x-api-key` + `anthropic-version` 头，SSE `content_block_delta` 流式，base64 `image` 内容块支持视觉。
-- **Gemini 真实实现**：`generateContent` / `streamGenerateContent` + `alt=sse`，`systemInstruction`，`inlineData` 视觉，key 走 `?key=` 查询参数。
-- **MiniMax 真实实现**：通过 OpenAI 兼容层接入，走 `/text/chatcompletion_v2` 路径。
-- **API Key 按提供方分别加密**：keyring 条目 `apikey.<provider>`（如 `apikey.deepseek`），切换提供方自动切换对应 Key；自动迁移旧版按角色存储的 keyring 条目。
-- **设置交互优化**：API Key 输入框绑定当前提供方，预载所有提供方 Key 后即时切换。
-- 移除 `stubs.ts`（全部 7 家提供方已实现）。
-
-### 0.2.0 · 2026-05-29 — Stage 2
-
-- **截图翻译**：xcap 全屏截图 → overlay 框选 + canvas 裁切 → 分屏展示窗。
-- **OCR 模式 A（多模态）**：GPT-4o / Qwen3-VL-Flash / Grok 等视觉模型，`translateImage()` + `recognizeImage()`。
-- **OCR 模式 B（离线）**：Windows.Media.Ocr WinRT 引擎识别 → 文本模型翻译。
-- **多模型协作**：视觉模型 OCR → 任意文本模型翻译，可组合不同服务商。
-- **OpenAI 兼容层**：统一处理 OpenAI / Qwen3-VL / Grok（SSE 流式 + 视觉 API）。
-- **快捷键录制**：点击字段直接按组合键录制，录制期间自动暂停全局快捷键避免冲突。
-- **双全局快捷键**：划词 `Alt+Q` + 截图 `Alt+S`，独立注册和设置。
-- **设置交互优化**：保存后自动关闭设置窗。
-
-### 0.1.0 · 2026-05-24 — Stage 1
-
-- Tauri 2 + React + TS 脚手架，双窗口（主窗 + 悬浮窗）。
-- 全局快捷键 + 划词捕获（Ctrl+C + 哨兵轮询）+ 光标定位悬浮窗。
-- 主窗双栏翻译器（左输入/右译文，debounce 自动触发）。
-- 系统托盘（显示主窗 / 退出），× 拦截不退出。
-- DeepSeek 流式 SSE 翻译实现，其余 6 家 Provider 占位。
-- 设置弹窗 + tauri-plugin-store 持久化。
+更早版本记录可查看 `docs/archive/README-0.9.0-RC.md`。
