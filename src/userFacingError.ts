@@ -1,3 +1,5 @@
+import { redactSensitive } from "./sanitize";
+
 export type ErrorContext =
   | "translation"
   | "ocr"
@@ -77,7 +79,8 @@ export function toUserFacingError(error: unknown, context: ErrorContext): string
 }
 
 function appendRaw(message: string): string {
-  return message ? `（${message.slice(0, 160)}）` : "";
+  const safe = redactSensitive(message, 160);
+  return safe ? `（${safe}）` : "";
 }
 
 function fallbackFor(context: ErrorContext): string {

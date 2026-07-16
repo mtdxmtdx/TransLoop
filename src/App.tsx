@@ -11,6 +11,7 @@ import { HistoryPanel } from "./HistoryPanel";
 import { UsagePanel } from "./UsagePanel";
 import { runTextTranslation } from "./translationRuntime";
 import { OnboardingModal } from "./OnboardingModal";
+import { PrivacyModal } from "./PrivacyModal";
 import { toUserFacingError } from "./userFacingError";
 
 const LANG_OPTIONS = [
@@ -38,10 +39,13 @@ type Phase =
 export function App() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showUsage, setShowUsage] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
+  const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
 
   const [input, setInput] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -53,10 +57,12 @@ export function App() {
     loadSettings()
       .then((s) => {
         setSettings(s);
+        setPrivacyAcknowledged(s.privacyPolicyVersion >= 1);
         if (!s.onboardingCompleted) setShowOnboarding(true);
+        if (s.privacyPolicyVersion < 1) setShowPrivacy(true);
         setLoaded(true);
       })
-      .catch(() => setLoaded(true));
+      .catch(() => setLoadError("设置加载失败，无法安全完成旧版凭证迁移。请重启应用后重试。"));
   }, []);
 
   async function runTranslate(text: string, s: AppSettings) {
@@ -160,6 +166,18 @@ export function App() {
       case "error":
         return <span className="error-text">{phase.message}</span>;
     }
+  }
+
+  if (loadError) {
+    return (
+      <div className="translator">
+        <div className="panes">
+          <div className="pane">
+            <div className="pane-body error-text">{loadError}</div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (!loaded) {
@@ -295,6 +313,7 @@ export function App() {
         }}
         onOpenUsage={() => setShowUsage(true)}
         onOpenOnboarding={() => setShowOnboarding(true)}
+        onOpenPrivacy={() => setShowPrivacy(true)}
       />
       <HistoryPanel open={showHistory} onClose={() => setShowHistory(false)} />
       <UsagePanel open={showUsage} onClose={() => setShowUsage(false)} />
@@ -303,9 +322,22 @@ export function App() {
         initial={settings}
         onClose={() => setShowOnboarding(false)}
         onComplete={(next) => {
-          setSettings(next);
+          const completed = privacyAcknowledged ? { ...next, privacyPolicyVersion: 1 } : next;
+          setSettings(completed);
           setShowOnboarding(false);
+          saveSettings(completed).catch(() => {});
           invoke("reload_shortcuts").catch(() => {});
+        }}
+        onOpenPrivacy={() => setShowPrivacy(true)}
+      />
+      <PrivacyModal
+        open={showPrivacy}
+        onClose={() => setShowPrivacy(false)}
+        onAcknowledge={() => {
+          setPrivacyAcknowledged(true);
+          const next = { ...settings, privacyPolicyVersion: 1 };
+          setSettings(next);
+          saveSettings(next).catch(() => {});
         }}
       />
     </div>

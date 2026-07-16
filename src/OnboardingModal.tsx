@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { HotkeyInput } from "./HotkeyInput";
-import { DEFAULT_SETTINGS, getProviderKey, saveSettings, setProviderKey, type AppSettings } from "./store";
+import {
+  DEFAULT_SETTINGS,
+  hasProviderKey,
+  saveSettings,
+  setProviderKey,
+  type AppSettings,
+} from "./store";
 import { PROVIDER_REGISTRY, type ProviderName } from "./providers/types";
 
 interface Props {
@@ -8,6 +14,7 @@ interface Props {
   initial: AppSettings;
   onComplete: (next: AppSettings) => void;
   onClose?: () => void;
+  onOpenPrivacy?: () => void;
 }
 
 const LANG_OPTIONS = [
@@ -22,17 +29,19 @@ const LANG_OPTIONS = [
   { value: "ru", label: "俄文" },
 ];
 
-export function OnboardingModal({ open, initial, onComplete, onClose }: Props) {
+export function OnboardingModal({ open, initial, onComplete, onClose, onOpenPrivacy }: Props) {
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<AppSettings>(initial);
   const [apiKey, setApiKey] = useState("");
+  const [keyConfigured, setKeyConfigured] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setStep(0);
     setDraft(initial);
-    getProviderKey(initial.provider).then(setApiKey).catch(() => setApiKey(""));
+    setApiKey("");
+    hasProviderKey(initial.provider).then(setKeyConfigured).catch(() => setKeyConfigured(false));
   }, [open, initial]);
 
   if (!open) return null;
@@ -49,21 +58,20 @@ export function OnboardingModal({ open, initial, onComplete, onClose }: Props) {
       baseUrl: prev.providerConfigs[provider]?.baseUrl ?? meta?.defaultBaseUrl ?? prev.baseUrl,
       model: prev.providerConfigs[provider]?.model ?? meta?.defaultModel ?? prev.model,
     }));
-    getProviderKey(provider).then(setApiKey).catch(() => setApiKey(""));
+    setApiKey("");
+    hasProviderKey(provider).then(setKeyConfigured).catch(() => setKeyConfigured(false));
   }
 
   async function finish() {
     setSaving(true);
-    const next: AppSettings = {
-      ...draft,
-      apiKey,
-      onboardingCompleted: true,
-    };
+    const next: AppSettings = { ...draft, onboardingCompleted: true };
     try {
-      await setProviderKey(next.provider, apiKey);
+      if (apiKey) await setProviderKey(next.provider, apiKey);
       await saveSettings(next);
       onComplete(next);
     } finally {
+      // Clear the transient renderer copy immediately after the save attempt.
+      setApiKey("");
       setSaving(false);
     }
   }
@@ -122,8 +130,15 @@ export function OnboardingModal({ open, initial, onComplete, onClose }: Props) {
                   placeholder="可先留空，稍后在设置里填写"
                   spellCheck={false}
                 />
-                <span className="hint">密钥保存在系统 keyring，不写入设置文件或诊断包。</span>
+                <span className="hint">
+                  {keyConfigured ? "当前 Provider 已配置密钥；留空表示保留现有密钥。" : "密钥由 Rust/keyring 保存，不写入设置文件或诊断包。"}
+                </span>
               </div>
+              {onOpenPrivacy && (
+                <button className="text-btn" type="button" onClick={onOpenPrivacy}>
+                  查看隐私政策
+                </button>
+              )}
             </section>
           )}
 

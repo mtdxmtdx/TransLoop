@@ -1,0 +1,76 @@
+name: Build and publish release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TRANSLOOP_UPDATE_PUBLIC_KEY_HEX: ${{ secrets.TRANSLOOP_UPDATE_PUBLIC_KEY_HEX }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build signed Windows installer
+        run: pnpm tauri build
+
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match package version $version"
+          }
+          "TRANSLOOP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Create signed checksum assets
+        shell: pwsh
+        env:
+          TRANSLOOP_UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.TRANSLOOP_UPDATE_SIGNING_PRIVATE_KEY }}
+        run: |
+          $installer = "src-tauri/target/release/bundle/nsis/TransLoop_$env:TRANSLOOP_VERSION`_x64-setup.exe"
+          node release-assets.mjs $installer .
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $notes = "RELEASE_NOTES_$env:TRANSLOOP_VERSION.md"
+          if (-not (Test-Path $notes)) {
+            $notes = "RELEASE_NOTES_1.0.0.md"
+          }
+          gh release create $tag `
+            --verify-tag `
+            --title "TransLoop $env:TRANSLOOP_VERSION" `
+            --notes-file $notes `
+            "src-tauri/target/release/bundle/nsis/TransLoop_$env:TRANSLOOP_VERSION`_x64-setup.exe" `
+            SHA256SUMS `
+            SHA256SUMS.sig

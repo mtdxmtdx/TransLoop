@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { fetch } from "@tauri-apps/plugin-http";
 import {
   DEFAULT_SETTINGS,
-  getProviderKey,
+  hasProviderKey,
   loadSettings,
   saveSettings,
   setProviderKey,
@@ -13,7 +12,11 @@ import { PROVIDER_REGISTRY, type ProviderName } from "./providers/types";
 import { HotkeyInput } from "./HotkeyInput";
 import { testProviderConnection, type ProviderAttempt } from "./translationRuntime";
 import { clearTranslationCache } from "./translationCache";
-import { checkForUpdates, type UpdateCheckResult } from "./updates";
+import {
+  checkForUpdates,
+  downloadAndLaunchVerifiedUpdate,
+  type UpdateCheckResult,
+} from "./updates";
 import { APP_VERSION } from "./appInfo";
 import { downloadBlob, downloadText } from "./fileDownload";
 import {
@@ -31,6 +34,7 @@ interface Props {
   onSaved: (next: AppSettings) => void;
   onOpenUsage?: () => void;
   onOpenOnboarding?: () => void;
+  onOpenPrivacy?: () => void;
 }
 
 type StatusKind = "idle" | "saving" | "success" | "error";
@@ -54,11 +58,12 @@ export function SettingsModal({
   onSaved,
   onOpenUsage,
   onOpenOnboarding,
+  onOpenPrivacy,
 }: Props) {
   const [draft, setDraft] = useState<AppSettings>(initial);
-  // 按提供方缓存 API Key。输入框显示/编辑的是 keyMap[当前提供方]，
-  // 因此切换提供方会自动切换到对应的 key，且各家分别保存。
+  // 只缓存本次编辑中用户主动输入的密钥；已存在的密钥只显示状态。
   const [keyMap, setKeyMap] = useState<Record<string, string>>({});
+  const [configuredMap, setConfiguredMap] = useState<Record<string, boolean>>({});
   const [status, setStatus] = useState<{ kind: StatusKind; text: string }>({
     kind: "idle",
     text: "",
@@ -90,21 +95,20 @@ export function SettingsModal({
     invoke<boolean>("get_autostart_status")
       .then(setAutostart)
       .catch(() => setAutostart(false));
-    // 预载所有提供方的 key，切换时无需等待、不闪烁。
+    // 只读取各 Provider 的 configured 状态，不读取密钥值。
     let cancelled = false;
     Promise.all(
-      PROVIDER_REGISTRY.map(async (p) => [p.id, await getProviderKey(p.id)] as const),
+      PROVIDER_REGISTRY.map(async (p) => [p.id, await hasProviderKey(p.id)] as const),
     ).then((entries) => {
       if (cancelled) return;
-      const map: Record<string, string> = {};
-      for (const [id, key] of entries) map[id] = key;
-      // 用 initial 里已解析出的当前 key 覆盖，保证与刚打开时一致。
-      map[initial.provider] = initial.apiKey;
-      map[initial.recognizeProvider] = initial.recognizeApiKey;
-      setKeyMap(map);
+      setConfiguredMap(Object.fromEntries(entries));
+      setKeyMap({});
     });
     return () => {
       cancelled = true;
+      // Do not retain user-entered secrets while the modal is closed or
+      // between provider-status refreshes.
+      setKeyMap({});
     };
   }, [open, initial]);
 
@@ -172,12 +176,6 @@ export function SettingsModal({
       model: prev.providerConfigs[next]?.model ?? meta?.defaultModel ?? prev.model,
     }));
     setStatus({ kind: "idle", text: "" });
-    // 若该提供方的 key 尚未在缓存里，补取一次（预载兜底）。
-    if (keyMap[next] === undefined) {
-      getProviderKey(next).then((k) =>
-        setKeyMap((prev) => (prev[next] === undefined ? { ...prev, [next]: k } : prev)),
-      );
-    }
   }
 
   function handleRecognizeProviderChange(next: ProviderName) {
@@ -189,31 +187,21 @@ export function SettingsModal({
       recognizeModel: meta?.defaultModel ?? prev.recognizeModel,
     }));
     setStatus({ kind: "idle", text: "" });
-    if (keyMap[next] === undefined) {
-      getProviderKey(next).then((k) =>
-        setKeyMap((prev) => (prev[next] === undefined ? { ...prev, [next]: k } : prev)),
-      );
-    }
   }
 
   async function handleSave() {
     setStatus({ kind: "saving", text: "保存中…" });
     try {
-      // 写入所有被编辑过的提供方 key（按家分别存储）。
+      // 只写入本次被编辑过的密钥；空字符串表示用户明确删除。
       await Promise.all(
         Object.entries(keyMap).map(([provider, key]) =>
           setProviderKey(provider as ProviderName, key),
         ),
       );
-      // draft 的当前生效 key 从缓存解析，保证 saveSettings 写对值。
-      const next: AppSettings = {
-        ...draft,
-        apiKey: keyMap[draft.provider] ?? "",
-        recognizeApiKey: keyMap[draft.recognizeProvider] ?? "",
-      };
-      await saveSettings(next);
+      await saveSettings(draft);
       await invoke("reload_shortcuts");
-      onSaved(next);
+      onSaved(draft);
+      setKeyMap({});
       // 保存成功后自动关闭设置窗口；失败时保持打开以展示错误。
       onClose();
     } catch (e) {
@@ -226,38 +214,28 @@ export function SettingsModal({
     setStatus({ kind: "idle", text: "" });
   }
 
-  function settingsWithKeys(): AppSettings {
-    return {
-      ...draft,
-      apiKey: keyMap[draft.provider] ?? "",
-      recognizeApiKey: keyMap[draft.recognizeProvider] ?? "",
-    };
-  }
-
   async function handleTestMain() {
-    const current = settingsWithKeys();
     setTestStatus((prev) => ({ ...prev, loading: "main" }));
     const attempt = await testProviderConnection({
-      provider: current.provider,
-      apiKey: current.apiKey,
-      baseUrl: current.baseUrl,
-      model: current.model,
-      fromLang: current.fromLang,
-      toLang: current.toLang,
+      provider: draft.provider,
+      baseUrl: draft.baseUrl,
+      model: draft.model,
+      settings: draft,
+      fromLang: draft.fromLang,
+      toLang: draft.toLang,
     });
     setTestStatus((prev) => ({ ...prev, main: attempt, loading: undefined }));
   }
 
   async function handleTestRecognize() {
-    const current = settingsWithKeys();
     setTestStatus((prev) => ({ ...prev, loading: "recognize" }));
     const attempt = await testProviderConnection({
-      provider: current.recognizeProvider,
-      apiKey: current.recognizeApiKey,
-      baseUrl: current.recognizeBaseUrl,
-      model: current.recognizeModel,
-      fromLang: current.fromLang,
-      toLang: current.toLang,
+      provider: draft.recognizeProvider,
+      baseUrl: draft.recognizeBaseUrl,
+      model: draft.recognizeModel,
+      settings: draft,
+      fromLang: draft.fromLang,
+      toLang: draft.toLang,
     });
     setTestStatus((prev) => ({ ...prev, recognize: attempt, loading: undefined }));
   }
@@ -318,40 +296,26 @@ export function SettingsModal({
 
   async function handleDownloadUpdate() {
     const result = updateStatus.result;
-    if (!result?.downloadUrl) {
-      setDownloadStatus({ kind: "error", text: "没有可用的下载地址，请重新检查更新。" });
+    if (!result?.hasUpdate) {
+      setDownloadStatus({ kind: "error", text: "当前没有可用的新版本。" });
+      return;
+    }
+    if (!result.verificationAvailable) {
+      setDownloadStatus({ kind: "error", text: "该版本缺少签名校验文件，已拒绝自动安装。" });
       return;
     }
     setDownloadStatus({ kind: "downloading", text: "正在下载安装包..." });
     try {
-      const response = await fetch(result.downloadUrl, {
-        method: "GET",
-        headers: { Accept: "application/octet-stream" },
-      });
-      if (!response.ok) {
-        throw new Error(`下载请求失败（${response.status}）`);
-      }
-      const blob = await response.blob();
-      if (blob.size === 0) {
-        throw new Error("下载内容为空。");
-      }
-      const fileName =
-        result.downloadFileName || `TransLoop_${result.latestVersion}_x64-setup.exe`;
-      setDownloadStatus({ kind: "downloading", text: "下载完成，正在启动安装程序..." });
-      const dataBase64 = await blobToBase64(blob);
-      const savedPath = await invoke<string>("save_and_launch_installer", {
-        fileName,
-        dataBase64,
-      });
-      const sizeMb = (blob.size / 1024 / 1024).toFixed(1);
+      const verified = await downloadAndLaunchVerifiedUpdate(result.latestVersion);
+      const sizeMb = (verified.size / 1024 / 1024).toFixed(1);
       setDownloadStatus({
         kind: "success",
-        text: `安装包已下载并启动：${fileName}（${sizeMb} MB）`,
+        text: `安装包已完成签名校验并启动：${verified.fileName}（${sizeMb} MB）`,
       });
       await logDiagnosticEvent({
         level: "info",
         category: "update",
-        message: `安装包下载并启动完成：${fileName} -> ${savedPath}`,
+        message: `安装包签名校验并启动完成：${verified.fileName}`,
       });
     } catch (e) {
       const message = toUserFacingError(e, "update");
@@ -374,7 +338,7 @@ export function SettingsModal({
   }
 
   function handleExportSettings() {
-    const exportFile = createSettingsExport(settingsWithKeys());
+    const exportFile = createSettingsExport(draft);
     downloadText(
       JSON.stringify(exportFile, null, 2),
       `transloop-settings-${new Date().toISOString().slice(0, 10)}.json`,
@@ -386,13 +350,7 @@ export function SettingsModal({
     try {
       const text = await pickTextFile();
       const imported = parseImportedSettings(text);
-      const next: AppSettings = {
-        ...imported,
-        apiKey: keyMap[imported.provider] ?? (await getProviderKey(imported.provider)),
-        recognizeApiKey:
-          keyMap[imported.recognizeProvider] ??
-          (await getProviderKey(imported.recognizeProvider)),
-      };
+      const next: AppSettings = imported;
       await saveSettings(next);
       await invoke("reload_shortcuts");
       setDraft(next);
@@ -424,7 +382,7 @@ export function SettingsModal({
     );
     if (!ok) return;
     try {
-      const blob = await createDiagnosticPackage(settingsWithKeys());
+      const blob = await createDiagnosticPackage(draft);
       downloadBlob(blob, `transloop-diagnostics-${new Date().toISOString().slice(0, 10)}.zip`);
       setStatus({ kind: "success", text: "诊断包已导出。" });
     } catch (e) {
@@ -547,7 +505,11 @@ export function SettingsModal({
                       type="password"
                       value={keyMap[draft.recognizeProvider] ?? ""}
                       onChange={(e) => setKeyFor(draft.recognizeProvider, e.target.value)}
-                      placeholder="sk-..."
+                      placeholder={
+                        configuredMap[draft.recognizeProvider]
+                          ? "已配置（留空表示不修改）"
+                          : "填写 API Key"
+                      }
                       spellCheck={false}
                     />
                   </div>
@@ -613,14 +575,16 @@ export function SettingsModal({
           <div className="field">
             <label>API Key</label>
             <input
-              type="password"
-              value={keyMap[draft.provider] ?? ""}
-              onChange={(e) => setKeyFor(draft.provider, e.target.value)}
-              placeholder="sk-..."
+                      type="password"
+                      value={keyMap[draft.provider] ?? ""}
+                      onChange={(e) => setKeyFor(draft.provider, e.target.value)}
+              placeholder={
+                configuredMap[draft.provider] ? "已配置（留空表示不修改）" : "填写 API Key"
+              }
               spellCheck={false}
             />
             <span className="hint">
-              按提供方分别保存，切换提供方会自动载入对应的 Key；写入系统凭据管理器（keyring），不以明文存放于配置文件。
+              密钥只在本次输入时短暂存在 WebView，实际请求和持久化均由 Rust/keyring 处理；留空表示保留现有密钥。
             </span>
           </div>
 
@@ -828,6 +792,11 @@ export function SettingsModal({
                   打开首次引导
                 </button>
               )}
+              {onOpenPrivacy && (
+                <button className="ghost" onClick={onOpenPrivacy}>
+                  隐私政策
+                </button>
+              )}
             </div>
             <span className="hint">
               当前版本 <code>{APP_VERSION}</code>。设置导出不含 API Key；导入后如缺 Key，请在本页重新填写。
@@ -932,17 +901,5 @@ function pickTextFile(): Promise<string> {
       file.text().then(resolve).catch(reject);
     };
     input.click();
-  });
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const value = String(reader.result ?? "");
-      resolve(value.includes(",") ? value.split(",").pop() ?? "" : value);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("读取安装包数据失败。"));
-    reader.readAsDataURL(blob);
   });
 }

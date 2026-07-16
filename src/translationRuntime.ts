@@ -1,7 +1,12 @@
-import { createProvider } from "./providers";
-import { PROVIDER_REGISTRY, type ProviderName, type VisionResult } from "./providers/types";
+import type { ProviderName } from "./providers/types";
 import type { AppSettings, OcrMode } from "./store";
-import { getProviderKey } from "./store";
+import {
+  NativeProviderError,
+  runNativeTextTranslation,
+  runNativeVisionRecognition,
+  runNativeVisionTranslation,
+  testNativeProvider,
+} from "./nativeTranslation";
 import { getCachedTranslation, setCachedTranslation } from "./translationCache";
 import {
   addUsage,
@@ -12,6 +17,7 @@ import {
   type UsageStatus,
 } from "./usage";
 import { logDiagnosticEvent } from "./diagnostics";
+import { redactSensitive } from "./sanitize";
 
 export type ProviderErrorKind =
   | "missing_key"
@@ -50,34 +56,22 @@ export interface ImageTranslationRunResult extends Omit<TranslationRunResult, "t
   translation: string;
 }
 
-interface RuntimeCandidate {
-  provider: ProviderName;
-  baseUrl: string;
-  model: string;
-  apiKey: string;
-  isFallback: boolean;
-}
-
 interface RuntimeOptions {
   settings: AppSettings;
   entryKind: UsageEntryKind;
   ocrMode?: OcrMode;
-  timeoutMs?: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000;
-const CONNECTIVITY_TEXT = "Hello";
+const MAX_TEXT_CHARS = 50_000;
 
 export async function runTextTranslation(
   text: string,
   fromLang: string,
   toLang: string,
-  options: RuntimeOptions & {
-    onChunk?: (delta: string, full: string) => void;
-  },
+  options: RuntimeOptions & { onChunk?: (delta: string, full: string) => void },
 ): Promise<TranslationRunResult> {
+  if (text.length > MAX_TEXT_CHARS) throw new Error("翻译文本超过 50,000 字符限制。");
   const groupId = createUsageGroupId();
-  const attempts: ProviderAttempt[] = [];
   const direction = resolveLanguageDirection(text, fromLang, toLang, options.settings);
 
   if (options.settings.translationCacheEnabled) {
@@ -100,7 +94,7 @@ export async function runTextTranslation(
         provider: options.settings.provider,
         model: options.settings.model,
         usedFallback: false,
-        attempts,
+        attempts: [],
         fromLang: direction.fromLang,
         toLang: direction.toLang,
         cacheHit: true,
@@ -108,144 +102,75 @@ export async function runTextTranslation(
     }
   }
 
-  const candidates = await buildTextCandidates(options.settings);
-  let lastError: Error | undefined;
-
-  for (const candidate of candidates) {
-    if (!candidate.apiKey) {
-      const attempt = await recordAttempt({
-        candidate,
-        groupId,
-        entryKind: options.entryKind,
-        requestedFromLang: fromLang,
-        requestedToLang: toLang,
-        resolvedFromLang: direction.fromLang,
-        resolvedToLang: direction.toLang,
-        ocrMode: options.ocrMode,
-        status: "skipped",
-        durationMs: 0,
-        inputChars: text.length,
-        outputChars: 0,
-        errorKind: "missing_key",
-        errorSummary: "API Key 未配置，已跳过该候选。",
-      });
-      attempts.push(attempt);
-      if (options.settings.diagnosticLoggingEnabled) {
-        await logDiagnosticEvent({
-          level: "warn",
-          category: "provider",
-          message: "Provider 候选因缺少 API Key 被跳过",
-          provider: candidate.provider,
-          model: candidate.model,
-          errorKind: "missing_key",
-          errorSummary: attempt.errorSummary,
-        });
-      }
-      lastError = new Error(attempt.errorSummary);
-      continue;
-    }
-
-    let active = true;
-    const started = performance.now();
-    try {
-      const provider = createProvider(candidate.provider, {
-        apiKey: candidate.apiKey,
-        baseUrl: candidate.baseUrl,
-        model: candidate.model,
-      });
-      const result = await withTimeout(
-        provider.translate(text, direction.fromLang, direction.toLang, (delta, full) => {
-          if (active) options.onChunk?.(delta, full);
-        }),
-        options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        () => {
-          active = false;
-        },
-      );
-      active = false;
-      const durationMs = Math.round(performance.now() - started);
-      const attempt = await recordAttempt({
-        candidate,
-        groupId,
-        entryKind: options.entryKind,
-        requestedFromLang: fromLang,
-        requestedToLang: toLang,
-        resolvedFromLang: direction.fromLang,
-        resolvedToLang: direction.toLang,
-        ocrMode: options.ocrMode,
-        status: "success",
-        durationMs,
-        inputChars: text.length,
-        outputChars: result.length,
-      });
-      attempts.push(attempt);
-      if (options.settings.translationCacheEnabled) {
-        await setCachedTranslation({
-          text,
-          fromLang: direction.fromLang,
-          toLang: direction.toLang,
-          translation: result,
-        }).catch((e) => {
-          if (options.settings.diagnosticLoggingEnabled) {
-            logDiagnosticEvent({
-              level: "warn",
-              category: "cache",
-              message: "翻译缓存写入失败",
-              provider: candidate.provider,
-              model: candidate.model,
-              errorSummary: e instanceof Error ? e.message : String(e),
-            });
-          }
-        });
-      }
-      return {
-        text: result,
-        provider: candidate.provider,
-        model: candidate.model,
-        usedFallback: candidate.isFallback,
-        attempts,
+  try {
+    const result = await runNativeTextTranslation({
+      text,
+      fromLang: direction.fromLang,
+      toLang: direction.toLang,
+      settings: options.settings,
+      entryKind: options.entryKind,
+      onChunk: options.onChunk,
+    });
+    const output = result.text ?? "";
+    await recordAttempts({
+      attempts: result.attempts,
+      groupId,
+      entryKind: options.entryKind,
+      settings: options.settings,
+      requestedFromLang: fromLang,
+      requestedToLang: toLang,
+      resolvedFromLang: direction.fromLang,
+      resolvedToLang: direction.toLang,
+      ocrMode: options.ocrMode,
+      inputChars: text.length,
+      outputChars: output.length,
+    });
+    if (options.settings.translationCacheEnabled) {
+      await setCachedTranslation({
+        text,
         fromLang: direction.fromLang,
         toLang: direction.toLang,
-        cacheHit: false,
-      };
-    } catch (e) {
-      active = false;
-      const durationMs = Math.round(performance.now() - started);
-      const error = normalizeError(e);
-      const attempt = await recordAttempt({
-        candidate,
-        groupId,
-        entryKind: options.entryKind,
-        requestedFromLang: fromLang,
-        requestedToLang: toLang,
-        resolvedFromLang: direction.fromLang,
-        resolvedToLang: direction.toLang,
-        ocrMode: options.ocrMode,
-        status: "error",
-        durationMs,
-        inputChars: text.length,
-        outputChars: 0,
-        errorKind: error.kind,
-        errorSummary: error.summary,
-      });
-      attempts.push(attempt);
-      if (options.settings.diagnosticLoggingEnabled) {
-        await logDiagnosticEvent({
-          level: "error",
-          category: "provider",
-          message: "文本翻译 Provider 请求失败",
-          provider: candidate.provider,
-          model: candidate.model,
-          durationMs,
-          errorKind: error.kind,
-          errorSummary: error.summary,
-        });
-      }
-      lastError = new Error(`${candidate.provider}/${candidate.model}: ${error.summary}`);
+        translation: output,
+      }).catch(() => {});
     }
+    return {
+      text: output,
+      provider: result.provider,
+      model: result.model,
+      usedFallback: result.usedFallback,
+      attempts: result.attempts,
+      fromLang: direction.fromLang,
+      toLang: direction.toLang,
+      cacheHit: false,
+    };
+  } catch (error) {
+    const attempts = error instanceof NativeProviderError ? error.attempts : [];
+    await recordAttempts({
+      attempts,
+      groupId,
+      entryKind: options.entryKind,
+      settings: options.settings,
+      requestedFromLang: fromLang,
+      requestedToLang: toLang,
+      resolvedFromLang: direction.fromLang,
+      resolvedToLang: direction.toLang,
+      ocrMode: options.ocrMode,
+      inputChars: text.length,
+      outputChars: 0,
+    });
+    if (options.settings.diagnosticLoggingEnabled) {
+      await logDiagnosticEvent({
+        level: "error",
+        category: "provider",
+        message: "文本翻译 Provider 请求失败",
+        provider: attempts[attempts.length - 1]?.provider,
+        model: attempts[attempts.length - 1]?.model,
+        errorKind: error instanceof NativeProviderError ? error.kind : "unknown",
+        errorSummary: safeErrorMessage(error),
+      });
+    }
+    throw new Error(safeErrorMessage(error));
   }
-
-  throw new Error(lastError?.message ?? "没有可用的 Provider 候选。");
 }
 
 export async function runImageTranslation(
@@ -255,267 +180,161 @@ export async function runImageTranslation(
   options: RuntimeOptions,
 ): Promise<ImageTranslationRunResult> {
   const groupId = createUsageGroupId();
-  const attempts: ProviderAttempt[] = [];
   const direction = resolveLanguageDirection("", fromLang, toLang, options.settings);
-  const candidates = await buildTextCandidates(options.settings);
-  let lastError: Error | undefined;
-
-  for (const candidate of candidates) {
-    const meta = PROVIDER_REGISTRY.find((p) => p.id === candidate.provider);
-    if (!candidate.apiKey || !meta?.supportVision) {
-      const errorKind: ProviderErrorKind = !candidate.apiKey ? "missing_key" : "unsupported";
-      const errorSummary = !candidate.apiKey
-        ? "API Key 未配置，已跳过该候选。"
-        : "该 Provider 不支持图片输入，已跳过该候选。";
-      const attempt = await recordAttempt({
-        candidate,
-        groupId,
-        entryKind: options.entryKind,
-        requestedFromLang: fromLang,
-        requestedToLang: toLang,
-        resolvedFromLang: direction.fromLang,
-        resolvedToLang: direction.toLang,
-        ocrMode: options.ocrMode,
-        status: "skipped",
-        durationMs: 0,
-        inputChars: 0,
-        outputChars: 0,
-        errorKind,
-        errorSummary,
-      });
-      attempts.push(attempt);
-      if (options.settings.diagnosticLoggingEnabled) {
-        await logDiagnosticEvent({
-          level: errorKind === "missing_key" ? "warn" : "info",
-          category: "provider",
-          message: "图片翻译候选被跳过",
-          provider: candidate.provider,
-          model: candidate.model,
-          errorKind,
-          errorSummary,
-        });
-      }
-      lastError = new Error(errorSummary);
-      continue;
-    }
-
-    const started = performance.now();
-    try {
-      const provider = createProvider(candidate.provider, {
-        apiKey: candidate.apiKey,
-        baseUrl: candidate.baseUrl,
-        model: candidate.model,
-      });
-      if (!provider.translateImage) throw new Error("该 Provider 不支持图片输入。");
-      const result = await withTimeout(
-        provider.translateImage(imageDataUrl, direction.fromLang, direction.toLang),
-        options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      );
-      const outputChars = result.original.length + result.translation.length;
-      const attempt = await recordAttempt({
-        candidate,
-        groupId,
-        entryKind: options.entryKind,
-        requestedFromLang: fromLang,
-        requestedToLang: toLang,
-        resolvedFromLang: direction.fromLang,
-        resolvedToLang: direction.toLang,
-        ocrMode: options.ocrMode,
-        status: "success",
-        durationMs: Math.round(performance.now() - started),
-        inputChars: 0,
-        outputChars,
-      });
-      attempts.push(attempt);
-      return {
-        original: result.original,
-        translation: result.translation,
-        provider: candidate.provider,
-        model: candidate.model,
-        usedFallback: candidate.isFallback,
-        attempts,
-        fromLang: direction.fromLang,
-        toLang: direction.toLang,
-        cacheHit: false,
-      };
-    } catch (e) {
-      const error = normalizeError(e);
-      const attempt = await recordAttempt({
-        candidate,
-        groupId,
-        entryKind: options.entryKind,
-        requestedFromLang: fromLang,
-        requestedToLang: toLang,
-        resolvedFromLang: direction.fromLang,
-        resolvedToLang: direction.toLang,
-        ocrMode: options.ocrMode,
-        status: "error",
-        durationMs: Math.round(performance.now() - started),
-        inputChars: 0,
-        outputChars: 0,
-        errorKind: error.kind,
-        errorSummary: error.summary,
-      });
-      attempts.push(attempt);
-      if (options.settings.diagnosticLoggingEnabled) {
-        await logDiagnosticEvent({
-          level: "error",
-          category: "provider",
-          message: "图片翻译 Provider 请求失败",
-          provider: candidate.provider,
-          model: candidate.model,
-          durationMs: attempt.durationMs,
-          errorKind: error.kind,
-          errorSummary: error.summary,
-        });
-      }
-      lastError = new Error(`${candidate.provider}/${candidate.model}: ${error.summary}`);
-    }
+  try {
+    const result = await runNativeVisionTranslation({
+      imageDataUrl,
+      fromLang: direction.fromLang,
+      toLang: direction.toLang,
+      settings: options.settings,
+      entryKind: options.entryKind,
+    });
+    const original = result.original ?? "";
+    const translation = result.translation ?? "";
+    await recordAttempts({
+      attempts: result.attempts,
+      groupId,
+      entryKind: options.entryKind,
+      settings: options.settings,
+      requestedFromLang: fromLang,
+      requestedToLang: toLang,
+      resolvedFromLang: direction.fromLang,
+      resolvedToLang: direction.toLang,
+      ocrMode: options.ocrMode,
+      inputChars: 0,
+      outputChars: original.length + translation.length,
+    });
+    return {
+      original,
+      translation,
+      provider: result.provider,
+      model: result.model,
+      usedFallback: result.usedFallback,
+      attempts: result.attempts,
+      fromLang: direction.fromLang,
+      toLang: direction.toLang,
+      cacheHit: false,
+    };
+  } catch (error) {
+    const attempts = error instanceof NativeProviderError ? error.attempts : [];
+    await recordAttempts({
+      attempts,
+      groupId,
+      entryKind: options.entryKind,
+      settings: options.settings,
+      requestedFromLang: fromLang,
+      requestedToLang: toLang,
+      resolvedFromLang: direction.fromLang,
+      resolvedToLang: direction.toLang,
+      ocrMode: options.ocrMode,
+      inputChars: 0,
+      outputChars: 0,
+    });
+    throw new Error(safeErrorMessage(error));
   }
+}
 
-  throw new Error(lastError?.message ?? "没有可用的图片 Provider 候选。");
+export async function runImageRecognition(
+  imageDataUrl: string,
+  fromLang: string,
+  options: RuntimeOptions,
+): Promise<string> {
+  const groupId = createUsageGroupId();
+  try {
+    const result = await runNativeVisionRecognition({
+      imageDataUrl,
+      fromLang,
+      settings: options.settings,
+      entryKind: options.entryKind,
+    });
+    const text = result.text ?? "";
+    await recordAttempts({
+      attempts: result.attempts,
+      groupId,
+      entryKind: options.entryKind,
+      settings: options.settings,
+      requestedFromLang: fromLang,
+      requestedToLang: options.settings.toLang,
+      resolvedFromLang: fromLang,
+      resolvedToLang: options.settings.toLang,
+      ocrMode: options.ocrMode,
+      inputChars: 0,
+      outputChars: text.length,
+    });
+    return text;
+  } catch (error) {
+    const attempts = error instanceof NativeProviderError ? error.attempts : [];
+    await recordAttempts({
+      attempts,
+      groupId,
+      entryKind: options.entryKind,
+      settings: options.settings,
+      requestedFromLang: fromLang,
+      requestedToLang: options.settings.toLang,
+      resolvedFromLang: fromLang,
+      resolvedToLang: options.settings.toLang,
+      ocrMode: options.ocrMode,
+      inputChars: 0,
+      outputChars: 0,
+    });
+    throw new Error(safeErrorMessage(error));
+  }
 }
 
 export async function testProviderConnection(input: {
   provider: ProviderName;
-  apiKey: string;
   baseUrl: string;
   model: string;
+  settings: AppSettings;
   fromLang?: string;
   toLang?: string;
 }): Promise<ProviderAttempt> {
-  const candidate: RuntimeCandidate = {
-    provider: input.provider,
-    apiKey: input.apiKey,
-    baseUrl: input.baseUrl,
-    model: input.model,
-    isFallback: false,
-  };
-  const settings = {
-    ...createMinimalSettings(candidate),
-    fallbackEnabled: false,
-  };
-  try {
-    const result = await runTextTranslation(
-      CONNECTIVITY_TEXT,
-      input.fromLang ?? "en",
-      input.toLang ?? "zh",
-      { settings, entryKind: "test", timeoutMs: DEFAULT_TIMEOUT_MS },
-    );
-    return result.attempts[result.attempts.length - 1];
-  } catch (e) {
-    return {
-      provider: input.provider,
-      model: input.model,
-      status: "error",
-      durationMs: 0,
-      isFallback: false,
-      ...normalizeError(e),
-      errorSummary: normalizeError(e).summary,
-    };
-  }
+  return testNativeProvider(input);
 }
 
-async function buildTextCandidates(settings: AppSettings): Promise<RuntimeCandidate[]> {
-  const candidates: RuntimeCandidate[] = [];
-  const add = (candidate: RuntimeCandidate) => {
-    const key = `${candidate.provider}\n${candidate.baseUrl}\n${candidate.model}`;
-    if (candidates.some((item) => `${item.provider}\n${item.baseUrl}\n${item.model}` === key)) {
-      return;
-    }
-    candidates.push(candidate);
-  };
-
-  const primaryKey = settings.apiKey || (await getProviderKey(settings.provider));
-  add({
-    provider: settings.provider,
-    apiKey: primaryKey,
-    baseUrl: settings.baseUrl,
-    model: settings.model,
-    isFallback: false,
-  });
-
-  if (!settings.fallbackEnabled) return candidates;
-
-  for (const model of settings.fallbackModels.map((item) => item.trim()).filter(Boolean)) {
-    add({
-      provider: settings.provider,
-      apiKey: primaryKey,
-      baseUrl: settings.baseUrl,
-      model,
-      isFallback: true,
-    });
-  }
-
-  for (const providerName of settings.fallbackProviderOrder) {
-    const meta = PROVIDER_REGISTRY.find((p) => p.id === providerName && p.implemented);
-    if (!meta) continue;
-    const config = settings.providerConfigs[providerName];
-    add({
-      provider: providerName,
-      apiKey: await getProviderKey(providerName),
-      baseUrl: config?.baseUrl || meta.defaultBaseUrl,
-      model: config?.model || meta.defaultModel,
-      isFallback: true,
-    });
-  }
-
-  return candidates;
-}
-
-async function recordAttempt(input: {
-  candidate: RuntimeCandidate;
+async function recordAttempts(input: {
+  attempts: ProviderAttempt[];
   groupId: string;
   entryKind: UsageEntryKind;
+  settings: AppSettings;
   requestedFromLang: string;
   requestedToLang: string;
   resolvedFromLang: string;
   resolvedToLang: string;
   ocrMode?: OcrMode;
-  status: UsageStatus;
-  durationMs: number;
   inputChars: number;
   outputChars: number;
-  errorKind?: ProviderErrorKind;
-  errorSummary?: string;
-}): Promise<ProviderAttempt> {
-  const estimatedInputTokens = estimateTokens(input.inputChars);
-  const estimatedOutputTokens = estimateTokens(input.outputChars);
-  await addUsage({
-    fallbackGroupId: input.groupId,
-    entryKind: input.entryKind,
-    provider: input.candidate.provider,
-    model: input.candidate.model,
-    fromLang: input.requestedFromLang,
-    toLang: input.requestedToLang,
-    resolvedFromLang: input.resolvedFromLang,
-    resolvedToLang: input.resolvedToLang,
-    cacheHit: false,
-    ocrMode: input.ocrMode,
-    status: input.status,
-    errorKind: input.errorKind,
-    errorSummary: input.errorSummary,
-    durationMs: input.durationMs,
-    isFallback: input.candidate.isFallback,
-    inputChars: input.inputChars,
-    outputChars: input.outputChars,
-    estimatedInputTokens,
-    estimatedOutputTokens,
-    estimatedCostUsd: estimateCostUsd(
-      input.candidate.model,
-      estimatedInputTokens,
-      estimatedOutputTokens,
+}): Promise<void> {
+  await Promise.all(
+    input.attempts.map((attempt) =>
+      addUsage({
+        fallbackGroupId: input.groupId,
+        entryKind: input.entryKind,
+        provider: attempt.provider,
+        model: attempt.model,
+        fromLang: input.requestedFromLang,
+        toLang: input.requestedToLang,
+        resolvedFromLang: input.resolvedFromLang,
+        resolvedToLang: input.resolvedToLang,
+        cacheHit: false,
+        ocrMode: input.ocrMode,
+        status: attempt.status,
+        errorKind: attempt.errorKind,
+        errorSummary: sanitizeErrorSummary(attempt.errorSummary),
+        durationMs: attempt.durationMs,
+        isFallback: attempt.isFallback,
+        inputChars: attempt.status === "success" ? input.inputChars : input.inputChars,
+        outputChars: attempt.status === "success" ? input.outputChars : 0,
+        estimatedInputTokens: estimateTokens(input.inputChars),
+        estimatedOutputTokens: estimateTokens(attempt.status === "success" ? input.outputChars : 0),
+        estimatedCostUsd: estimateCostUsd(
+          attempt.model,
+          estimateTokens(input.inputChars),
+          estimateTokens(attempt.status === "success" ? input.outputChars : 0),
+        ),
+      }).catch(() => {}),
     ),
-  }).catch(() => {});
-  return {
-    provider: input.candidate.provider,
-    model: input.candidate.model,
-    status: input.status,
-    durationMs: input.durationMs,
-    isFallback: input.candidate.isFallback,
-    errorKind: input.errorKind,
-    errorSummary: input.errorSummary,
-  };
+  );
 }
 
 async function recordCacheHit(input: {
@@ -530,8 +349,6 @@ async function recordCacheHit(input: {
   inputChars: number;
   outputChars: number;
 }): Promise<void> {
-  const estimatedInputTokens = estimateTokens(input.inputChars);
-  const estimatedOutputTokens = estimateTokens(input.outputChars);
   await addUsage({
     fallbackGroupId: input.groupId,
     entryKind: input.entryKind,
@@ -548,50 +365,19 @@ async function recordCacheHit(input: {
     isFallback: false,
     inputChars: input.inputChars,
     outputChars: input.outputChars,
-    estimatedInputTokens,
-    estimatedOutputTokens,
+    estimatedInputTokens: estimateTokens(input.inputChars),
+    estimatedOutputTokens: estimateTokens(input.outputChars),
     estimatedCostUsd: 0,
   }).catch(() => {});
 }
 
-function normalizeError(e: unknown): { kind: ProviderErrorKind; summary: string } {
-  const raw = e instanceof Error ? e.message : String(e);
-  const summary = raw.replace(/\s+/g, " ").trim().slice(0, 240) || "未知错误";
-  const status = Number(
-    summary.match(/\((\d{3})\)/)?.[1] ??
-      summary.match(/\b(?:http|status|code)\s*:?\s*(\d{3})\b/i)?.[1] ??
-      NaN,
-  );
-  const lower = summary.toLowerCase();
+function safeErrorMessage(error: unknown): string {
+  if (error instanceof NativeProviderError) return error.message;
+  return "Provider 请求失败，请稍后重试。";
+}
 
-  if (lower.includes("timeout") || summary.includes("超时")) {
-    return { kind: "timeout", summary };
-  }
-  if (summary.includes("API Key") || summary.includes("未配置")) {
-    return { kind: "missing_key", summary };
-  }
-  if (summary.includes("不支持") || lower.includes("unsupported")) {
-    return { kind: "unsupported", summary };
-  }
-  if (status === 429 || lower.includes("rate limit") || lower.includes("too many requests")) {
-    return { kind: "rate_limited", summary };
-  }
-  if (status >= 500) return { kind: "server_error", summary };
-  if (status >= 400) return { kind: "client_error", summary };
-  if (summary.includes("返回为空") || lower.includes("empty")) {
-    return { kind: "empty_response", summary };
-  }
-  if (
-    lower.includes("network") ||
-    lower.includes("fetch") ||
-    lower.includes("connection") ||
-    lower.includes("dns") ||
-    lower.includes("failed to connect") ||
-    summary.includes("套接字")
-  ) {
-    return { kind: "network", summary };
-  }
-  return { kind: "unknown", summary };
+function sanitizeErrorSummary(value?: string): string | undefined {
+  return value ? redactSensitive(value, 240) : undefined;
 }
 
 function resolveLanguageDirection(
@@ -615,7 +401,6 @@ function resolveLanguageDirection(
 function detectSourceLanguage(text: string): string {
   const sample = text.trim();
   if (!sample) return "auto";
-
   const counts = {
     zh: countMatches(sample, /[\u4e00-\u9fff]/g),
     ja: countMatches(sample, /[\u3040-\u30ff]/g),
@@ -639,56 +424,5 @@ function countMatches(text: string, pattern: RegExp): number {
 
 function sameLanguage(a: string, b: string): boolean {
   if (a === b) return true;
-  if (a.startsWith("zh") && b.startsWith("zh")) return true;
-  return false;
+  return a.startsWith("zh") && b.startsWith("zh");
 }
-
-function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  onTimeout?: () => void,
-): Promise<T> {
-  let timer: number | undefined;
-  const timeout = new Promise<T>((_, reject) => {
-    timer = window.setTimeout(() => {
-      onTimeout?.();
-      reject(new Error(`请求超时（${Math.round(timeoutMs / 1000)}s）`));
-    }, timeoutMs);
-  });
-  return Promise.race([promise, timeout]).finally(() => {
-    if (timer !== undefined) window.clearTimeout(timer);
-  });
-}
-
-function createMinimalSettings(candidate: RuntimeCandidate): AppSettings {
-  return {
-    hotkey: "",
-    captureHotkey: "",
-    provider: candidate.provider,
-    apiKey: candidate.apiKey,
-    baseUrl: candidate.baseUrl,
-    model: candidate.model,
-    fromLang: "en",
-    toLang: "zh",
-    streamOutput: false,
-    ocrMode: "A",
-    visionCollab: false,
-    recognizeProvider: candidate.provider,
-    recognizeApiKey: candidate.apiKey,
-    recognizeBaseUrl: candidate.baseUrl,
-    recognizeModel: candidate.model,
-    fallbackEnabled: false,
-    fallbackModels: [],
-    fallbackProviderOrder: [],
-    providerConfigs: {},
-    smartDirectionEnabled: false,
-    smartPrimaryTargetLang: "zh",
-    smartAlternateTargetLang: "en",
-    translationCacheEnabled: false,
-    onboardingCompleted: true,
-    lastUpdateCheckAt: undefined,
-    diagnosticLoggingEnabled: true,
-  };
-}
-
-export type { VisionResult };

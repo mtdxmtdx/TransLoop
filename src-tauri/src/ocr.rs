@@ -8,10 +8,9 @@
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::{
-    fs,
+    io::Write,
     path::PathBuf,
     process::Command,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use windows::{
     Globalization::Language,
@@ -20,6 +19,8 @@ use windows::{
     Storage::Streams::{DataWriter, InMemoryRandomAccessStream},
     Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED},
 };
+
+const MAX_IMAGE_PIXELS: u64 = 40_000_000;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +99,11 @@ pub fn recognize_windows(image_bytes: &[u8], lang_tag: Option<&str>) -> Result<O
         .map_err(|e| anyhow!("decoder create: {e}"))?
         .join()
         .map_err(|e| anyhow!("decoder await: {e}"))?;
+    let width = decoder.PixelWidth().map_err(|e| anyhow!("image width: {e}"))? as u64;
+    let height = decoder.PixelHeight().map_err(|e| anyhow!("image height: {e}"))? as u64;
+    if width == 0 || height == 0 || width.saturating_mul(height) > MAX_IMAGE_PIXELS {
+        return Err(anyhow!("图片像素尺寸超过限制"));
+    }
     let bitmap = decoder
         .GetSoftwareBitmapAsync()
         .map_err(|e| anyhow!("get bitmap: {e}"))?
@@ -156,8 +162,19 @@ pub fn recognize_windows(image_bytes: &[u8], lang_tag: Option<&str>) -> Result<O
 }
 
 pub fn recognize_tesseract(image_bytes: &[u8], lang: Option<&str>) -> Result<OcrResult> {
-    let input_path = temp_png_path();
-    fs::write(&input_path, image_bytes).map_err(|e| anyhow!("写入临时图片失败: {e}"))?;
+    let mut temporary = tempfile::Builder::new()
+        .prefix("transloop-ocr-")
+        .suffix(".png")
+        .tempfile_in(std::env::temp_dir())
+        .map_err(|e| anyhow!("写入临时图片失败: {e}"))?;
+    temporary
+        .write_all(image_bytes)
+        .map_err(|e| anyhow!("写入临时图片失败: {e}"))?;
+    temporary
+        .as_file_mut()
+        .sync_all()
+        .map_err(|e| anyhow!("提交临时图片失败: {e}"))?;
+    let input_path = temporary.path().to_path_buf();
 
     let tesseract = find_tesseract()?;
     let tessdata = find_tessdata();
@@ -180,25 +197,23 @@ pub fn recognize_tesseract(image_bytes: &[u8], lang: Option<&str>) -> Result<Ocr
             Ok(output) if output.status.success() => {
                 let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !text.is_empty() || psm == "11" {
-                    let _ = fs::remove_file(&input_path);
                     return Ok(result_from_plain_text(text));
                 }
             }
             Ok(output) => {
-                last_error = Some(String::from_utf8_lossy(&output.stderr).trim().to_string());
+                last_error = Some(format!("Tesseract exited with status {}", output.status));
             }
             Err(e) => {
-                let _ = fs::remove_file(&input_path);
                 return Err(anyhow!(
-                    "启动 Tesseract 失败。已尝试 PATH 和默认安装目录，请确认 Tesseract OCR 已安装: {e}"
+                    "启动 Tesseract 失败。请确认 Tesseract OCR 已安装（错误码：{}）",
+                    e.kind()
                 ));
             }
         }
     }
 
-    let _ = fs::remove_file(&input_path);
     Err(anyhow!(
-        "Tesseract OCR 识别失败: {}",
+        "Tesseract OCR 识别失败：{}",
         last_error
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "无错误输出".to_string())
@@ -235,14 +250,6 @@ fn find_tessdata() -> Option<PathBuf> {
     candidates
         .into_iter()
         .find(|path| path.join("eng.traineddata").exists())
-}
-
-fn temp_png_path() -> PathBuf {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    std::env::temp_dir().join(format!("transloop-ocr-{stamp}.png"))
 }
 
 fn tesseract_lang(lang: Option<&str>) -> String {

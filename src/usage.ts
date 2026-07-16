@@ -1,6 +1,7 @@
 import { load, type Store } from "@tauri-apps/plugin-store";
 import type { OcrMode } from "./store";
 import type { ProviderName } from "./providers/types";
+import { redactSensitive } from "./sanitize";
 
 export type UsageEntryKind = "main" | "selection" | "capture" | "test";
 export type UsageStatus = "success" | "error" | "skipped" | "cache_hit";
@@ -72,7 +73,7 @@ export function estimateCostUsd(
 
 export async function listUsage(): Promise<UsageRecord[]> {
   const store = await getUsageStore();
-  const records = (await store.get<UsageRecord[]>(USAGE_KEY)) ?? [];
+  const records = normalizeUsage(await store.get<unknown>(USAGE_KEY));
   return trimUsage(records).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -83,9 +84,14 @@ export async function addUsage(input: AddUsageInput): Promise<void> {
     id: createUsageId(),
     createdAt: new Date().toISOString(),
     ...input,
+    errorSummary: sanitizeUsageText(input.errorSummary),
   };
   await store.set(USAGE_KEY, trimUsage([record, ...records]));
   await store.save();
+}
+
+function sanitizeUsageText(value?: string): string | undefined {
+  return value ? redactSensitive(value, 240) : undefined;
 }
 
 export async function clearUsage(): Promise<void> {
@@ -106,6 +112,73 @@ function trimUsage(records: UsageRecord[]): UsageRecord[] {
       return Number.isFinite(time) && time >= minTime;
     })
     .slice(0, MAX_USAGE);
+}
+
+function normalizeUsage(value: unknown): UsageRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => isRecord(item))
+    .map((item) => ({
+      id: stringValue(item.id, 128),
+      fallbackGroupId: stringValue(item.fallbackGroupId, 128),
+      createdAt: stringValue(item.createdAt, 64),
+      entryKind: validEntryKind(item.entryKind) ? item.entryKind : "main",
+      provider: validProvider(item.provider) ? item.provider : "deepseek",
+      model: stringValue(item.model, 200),
+      fromLang: stringValue(item.fromLang, 32),
+      toLang: stringValue(item.toLang, 32),
+      ocrMode: validOcrMode(item.ocrMode) ? item.ocrMode : undefined,
+      status: validStatus(item.status) ? item.status : "error",
+      cacheHit: typeof item.cacheHit === "boolean" ? item.cacheHit : undefined,
+      resolvedFromLang: stringOptional(item.resolvedFromLang, 32),
+      resolvedToLang: stringOptional(item.resolvedToLang, 32),
+      errorKind: stringOptional(item.errorKind, 80),
+      errorSummary: stringOptional(item.errorSummary, 240),
+      durationMs: boundedNumber(item.durationMs, 0, 86_400_000),
+      isFallback: item.isFallback === true,
+      inputChars: boundedNumber(item.inputChars, 0, 50_000),
+      outputChars: boundedNumber(item.outputChars, 0, 200_000),
+      estimatedInputTokens: boundedNumber(item.estimatedInputTokens, 0, 200_000),
+      estimatedOutputTokens: boundedNumber(item.estimatedOutputTokens, 0, 200_000),
+      estimatedCostUsd: typeof item.estimatedCostUsd === "number" && Number.isFinite(item.estimatedCostUsd)
+        ? Math.max(0, Math.min(item.estimatedCostUsd, 1_000_000))
+        : undefined,
+    }));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown, max: number): string {
+  return typeof value === "string" ? value.slice(0, max) : "";
+}
+
+function stringOptional(value: unknown, max: number): string | undefined {
+  return typeof value === "string" ? value.slice(0, max) : undefined;
+}
+
+function boundedNumber(value: unknown, min: number, max: number): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(min, Math.min(max, value))
+    : 0;
+}
+
+function validProvider(value: unknown): value is ProviderName {
+  return value === "deepseek" || value === "openai" || value === "claude" || value === "gemini" ||
+    value === "qwen" || value === "grok" || value === "minimax";
+}
+
+function validEntryKind(value: unknown): value is UsageEntryKind {
+  return value === "main" || value === "selection" || value === "capture" || value === "test";
+}
+
+function validStatus(value: unknown): value is UsageStatus {
+  return value === "success" || value === "error" || value === "skipped" || value === "cache_hit";
+}
+
+function validOcrMode(value: unknown): value is OcrMode {
+  return value === "A" || value === "B" || value === "C";
 }
 
 function createUsageId(): string {

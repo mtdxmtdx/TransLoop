@@ -39,3 +39,8 @@
 - [ ] README 链接到 `PRIVACY.md`。
 - [ ] GitHub Release 正文使用 `RELEASE_NOTES_1.0.0.md`。
 - [ ] GitHub Release 上传 `TransLoop_1.0.0_x64-setup.exe`。
+- [ ] GitHub Actions 已配置 `TRANSLOOP_UPDATE_PUBLIC_KEY_HEX` 和 `TRANSLOOP_UPDATE_SIGNING_PRIVATE_KEY`；私钥不进入仓库、安装包或本地日志。
+- [ ] Release 同时上传 `SHA256SUMS` 和 `SHA256SUMS.sig`，且签名公钥与生产构建注入的公钥一致。
+- [ ] `node security-check.mjs` 通过，确认更新器使用构建时注入的公钥而不是占位密钥。
+- [ ] 验证旧版包含 `apiKey` / `recognizeApiKey` 的设置迁移失败时不会继续进入主界面或保存默认设置。
+- [ ] 验证同一窗口快速连续翻译、取消、复用 request ID 时并发预约不会泄漏或错配。

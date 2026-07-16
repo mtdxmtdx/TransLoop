@@ -1,4 +1,4 @@
-import { load, type Store } from "@tauri-apps/plugin-store";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface TranslationCacheRecord {
   cacheKey: string;
@@ -11,18 +11,15 @@ export interface TranslationCacheRecord {
   hitCount: number;
 }
 
-const CACHE_FILE = "translation-cache.json";
-const CACHE_KEY = "records";
 const MAX_CACHE = 1000;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-let cacheStorePromise: Promise<Store> | null = null;
+async function readCache(): Promise<TranslationCacheRecord[]> {
+  return invoke<TranslationCacheRecord[]>("secure_cache_get");
+}
 
-async function getCacheStore(): Promise<Store> {
-  if (!cacheStorePromise) {
-    cacheStorePromise = load(CACHE_FILE, { autoSave: true, defaults: {} });
-  }
-  return cacheStorePromise;
+async function writeCache(records: TranslationCacheRecord[]): Promise<void> {
+  await invoke("secure_cache_put", { records });
 }
 
 export async function getCachedTranslation(
@@ -30,25 +27,19 @@ export async function getCachedTranslation(
   fromLang: string,
   toLang: string,
 ): Promise<TranslationCacheRecord | null> {
-  const store = await getCacheStore();
-  const records = trimCache((await store.get<TranslationCacheRecord[]>(CACHE_KEY)) ?? []);
-  const cacheKey = createCacheKey(text, fromLang, toLang);
+  const records = trimCache(await readCache());
+  const cacheKey = await createCacheKey(text, fromLang, toLang);
   const hit = records.find((record) => record.cacheKey === cacheKey);
   if (!hit) {
-    await persistIfTrimmed(store, records);
+    if (records.length !== (await readCache()).length) await writeCache(records);
     return null;
   }
-
   const nextHit: TranslationCacheRecord = {
     ...hit,
     hitCount: hit.hitCount + 1,
     lastHitAt: new Date().toISOString(),
   };
-  await store.set(
-    CACHE_KEY,
-    [nextHit, ...records.filter((record) => record.cacheKey !== cacheKey)],
-  );
-  await store.save();
+  await writeCache([nextHit, ...records.filter((record) => record.cacheKey !== cacheKey)]);
   return nextHit;
 }
 
@@ -59,11 +50,9 @@ export async function setCachedTranslation(input: {
   translation: string;
 }): Promise<void> {
   if (!input.text.trim() || !input.translation.trim()) return;
-
-  const store = await getCacheStore();
-  const records = trimCache((await store.get<TranslationCacheRecord[]>(CACHE_KEY)) ?? []);
-  const sourceHash = hashText(normalizeSource(input.text));
-  const cacheKey = createCacheKey(input.text, input.fromLang, input.toLang);
+  const records = trimCache(await readCache());
+  const sourceHash = await hashText(normalizeSource(input.text));
+  const cacheKey = await createCacheKey(input.text, input.fromLang, input.toLang);
   const now = new Date().toISOString();
   const record: TranslationCacheRecord = {
     cacheKey,
@@ -75,21 +64,15 @@ export async function setCachedTranslation(input: {
     lastHitAt: now,
     hitCount: 0,
   };
-  await store.set(
-    CACHE_KEY,
-    [record, ...records.filter((item) => item.cacheKey !== cacheKey)].slice(0, MAX_CACHE),
-  );
-  await store.save();
+  await writeCache([record, ...records.filter((item) => item.cacheKey !== cacheKey)].slice(0, MAX_CACHE));
 }
 
 export async function clearTranslationCache(): Promise<void> {
-  const store = await getCacheStore();
-  await store.set(CACHE_KEY, []);
-  await store.save();
+  await invoke("secure_cache_clear");
 }
 
-function createCacheKey(text: string, fromLang: string, toLang: string): string {
-  return `${hashText(normalizeSource(text))}:${fromLang}:${toLang}`;
+async function createCacheKey(text: string, fromLang: string, toLang: string): Promise<string> {
+  return `${await hashText(normalizeSource(text))}:${fromLang}:${toLang}`;
 }
 
 function normalizeSource(text: string): string {
@@ -104,22 +87,8 @@ function trimCache(records: TranslationCacheRecord[]): TranslationCacheRecord[] 
     .slice(0, MAX_CACHE);
 }
 
-async function persistIfTrimmed(
-  store: Store,
-  records: TranslationCacheRecord[],
-): Promise<void> {
-  const current = (await store.get<TranslationCacheRecord[]>(CACHE_KEY)) ?? [];
-  if (current.length !== records.length) {
-    await store.set(CACHE_KEY, records);
-    await store.save();
-  }
-}
-
-function hashText(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
+async function hashText(text: string): Promise<string> {
+  if (typeof crypto === "undefined" || !crypto.subtle) throw new Error("当前环境不支持安全哈希。");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

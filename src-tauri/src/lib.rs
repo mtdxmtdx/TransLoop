@@ -1,17 +1,20 @@
 mod capture;
 mod ocr;
 mod popup;
+mod provider;
+mod secure_store;
 mod selection;
 mod shortcut;
+mod update;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Serialize;
 use serde_json::Value;
-use std::{fs, path::Path, process::Command};
+use std::process::Command;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, WindowEvent,
+    AppHandle, Manager, State, WebviewWindow, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_store::StoreExt;
@@ -20,6 +23,9 @@ const STORE_FILE: &str = "settings.json";
 const SETTINGS_KEY: &str = "settings";
 const DEFAULT_HOTKEY: &str = "Alt+Q";
 const DEFAULT_CAPTURE_HOTKEY: &str = "Alt+S";
+const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+const MAX_IMAGE_DATA_URL_CHARS: usize = 30 * 1024 * 1024;
+const MAX_DIAGNOSTIC_VERSION_CHARS: usize = 128;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,7 +68,8 @@ fn show_main_window(app: &AppHandle) {
 }
 
 #[tauri::command]
-async fn reload_shortcuts(app: AppHandle) -> Result<(), String> {
+async fn reload_shortcuts(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
+    require_main(&window)?;
     let translate = read_hotkey(&app);
     let capture = read_capture_hotkey(&app);
     shortcut::reregister(&app, &translate, &capture).map_err(|e| e.to_string())
@@ -72,7 +79,8 @@ async fn reload_shortcuts(app: AppHandle) -> Result<(), String> {
 /// user is recording a new combination in the settings UI. Restored by a
 /// subsequent `reload_shortcuts` call.
 #[tauri::command]
-async fn suspend_shortcuts(app: AppHandle) -> Result<(), String> {
+async fn suspend_shortcuts(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
+    require_main(&window)?;
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     app.global_shortcut()
         .unregister_all()
@@ -80,50 +88,83 @@ async fn suspend_shortcuts(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn hide_popup(app: AppHandle) -> Result<(), String> {
+async fn hide_popup(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
+    require_allowed(&window, &["main", "popup"])?;
     popup::hide_popup(&app).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn show_main(app: AppHandle) -> Result<(), String> {
+async fn show_main(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
+    require_allowed(&window, &["main", "popup", "capture"])?;
     show_main_window(&app);
     Ok(())
 }
 
 #[tauri::command]
-async fn start_capture(app: AppHandle) -> Result<(), String> {
+async fn start_capture(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
+    require_main(&window)?;
     capture::begin_capture(&app).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn finish_capture(app: AppHandle, data_url: String) -> Result<(), String> {
+async fn finish_capture(window: WebviewWindow, app: AppHandle, data_url: String) -> Result<(), String> {
+    require_allowed(&window, &["overlay"])?;
+    decode_image_data_url(&data_url)?;
     capture::finish_capture(&app, data_url).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn cancel_capture(app: AppHandle) -> Result<(), String> {
+async fn cancel_capture(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
+    require_allowed(&window, &["overlay"])?;
     capture::cancel_capture(&app).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn hide_capture(app: AppHandle) -> Result<(), String> {
+async fn hide_capture(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
+    require_allowed(&window, &["capture"])?;
     capture::hide_capture(&app).map_err(|e| e.to_string())
 }
 
 fn decode_image_data_url(image: &str) -> Result<Vec<u8>, String> {
-    let b64 = image
-        .rsplit_once(',')
-        .map(|(_, rest)| rest)
-        .unwrap_or(image);
-    STANDARD
+    if image.len() > MAX_IMAGE_DATA_URL_CHARS {
+        return Err("图片数据超过大小限制。".into());
+    }
+    let (header, b64) = image
+        .split_once(',')
+        .ok_or_else(|| "图片数据格式无效。".to_string())?;
+    let mime = header
+        .strip_prefix("data:")
+        .and_then(|value| value.strip_suffix(";base64"))
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !matches!(mime.as_str(), "image/png" | "image/jpeg" | "image/webp" | "image/bmp" | "image/gif") {
+        return Err("只支持常见图片格式。".into());
+    }
+    let bytes = STANDARD
         .decode(b64.trim())
-        .map_err(|e| format!("图片解码失败: {e}"))
+        .map_err(|_| "图片解码失败。".to_string())?;
+    if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+        return Err("图片大小无效。".into());
+    }
+    let valid_magic = match mime.as_str() {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        "image/webp" => bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
+        "image/bmp" => bytes.starts_with(b"BM"),
+        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        _ => false,
+    };
+    if !valid_magic {
+        return Err("图片内容与声明格式不匹配。".into());
+    }
+    Ok(bytes)
 }
 
 /// OCR mode B: run Windows OCR on a base64 image (data URL or bare base64).
 /// Returns structured OCR text. `lang` is an optional BCP-47 tag.
 #[tauri::command]
-async fn ocr_windows(image: String, lang: Option<String>) -> Result<ocr::OcrResult, String> {
+async fn ocr_windows(window: WebviewWindow, image: String, lang: Option<String>) -> Result<ocr::OcrResult, String> {
+    require_allowed(&window, &["capture"])?;
     let bytes = decode_image_data_url(&image)?;
     let lang = lang.filter(|s| !s.trim().is_empty());
     tauri::async_runtime::spawn_blocking(move || ocr::recognize_windows(&bytes, lang.as_deref()))
@@ -134,7 +175,8 @@ async fn ocr_windows(image: String, lang: Option<String>) -> Result<ocr::OcrResu
 
 /// OCR mode C: run local Tesseract OCR on a base64 image.
 #[tauri::command]
-async fn ocr_tesseract(image: String, lang: Option<String>) -> Result<ocr::OcrResult, String> {
+async fn ocr_tesseract(window: WebviewWindow, image: String, lang: Option<String>) -> Result<ocr::OcrResult, String> {
+    require_allowed(&window, &["capture"])?;
     let bytes = decode_image_data_url(&image)?;
     let lang = lang.filter(|s| !s.trim().is_empty());
     tauri::async_runtime::spawn_blocking(move || ocr::recognize_tesseract(&bytes, lang.as_deref()))
@@ -143,54 +185,290 @@ async fn ocr_tesseract(image: String, lang: Option<String>) -> Result<ocr::OcrRe
         .map_err(|e| e.to_string())
 }
 
-// ---- API Key 安全存储：OS keyring（Windows 凭据管理器 / macOS Keychain 等）----
+// ---- Restricted native gateway ----
 
-const KEYRING_SERVICE: &str = "com.transloop.app";
-
-fn keyring_entry(key: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, key).map_err(|e| format!("keyring 初始化失败: {e}"))
-}
-
-/// 写入一个密钥；空字符串等同删除。
-#[tauri::command]
-async fn set_secret(key: String, value: String) -> Result<(), String> {
-    let entry = keyring_entry(&key)?;
-    if value.is_empty() {
-        return match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(format!("删除密钥失败: {e}")),
-        };
-    }
-    entry
-        .set_password(&value)
-        .map_err(|e| format!("保存密钥失败: {e}"))
-}
-
-/// 读取一个密钥；不存在时返回 None。
-#[tauri::command]
-async fn get_secret(key: String) -> Result<Option<String>, String> {
-    let entry = keyring_entry(&key)?;
-    match entry.get_password() {
-        Ok(v) => Ok(Some(v)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("读取密钥失败: {e}")),
+fn require_main(window: &WebviewWindow) -> Result<(), String> {
+    if window.label() == "main" {
+        Ok(())
+    } else {
+        Err("该操作只能由主窗口发起。".into())
     }
 }
 
-/// 删除一个密钥。
-#[tauri::command]
-async fn delete_secret(key: String) -> Result<(), String> {
-    let entry = keyring_entry(&key)?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("删除密钥失败: {e}")),
+fn require_allowed(window: &WebviewWindow, allowed: &[&str]) -> Result<(), String> {
+    if allowed.iter().any(|label| *label == window.label()) {
+        Ok(())
+    } else {
+        Err("当前窗口无权执行该操作。".into())
     }
+}
+
+#[tauri::command]
+async fn migrate_legacy_secrets(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
+    require_main(&window)?;
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|error| format!("打开设置失败: {error}"))?;
+    let Some(Value::Object(mut map)) = store.get(SETTINGS_KEY) else {
+        provider::migrate_role_secret("apiKey", "deepseek")?;
+        provider::migrate_role_secret("recognizeApiKey", "qwen")?;
+        return Ok(());
+    };
+    let provider_name = map
+        .get("provider")
+        .and_then(Value::as_str)
+        .filter(|value| provider::is_supported_provider(value))
+        .unwrap_or("deepseek")
+        .to_string();
+    let recognize_provider = map
+        .get("recognizeProvider")
+        .and_then(Value::as_str)
+        .filter(|value| provider::is_supported_provider(value))
+        .unwrap_or("qwen")
+        .to_string();
+    let legacy_roles = vec![
+        ("apiKey".to_string(), provider_name),
+        ("recognizeApiKey".to_string(), recognize_provider),
+    ];
+    let mut legacy_secrets = Vec::new();
+    let mut changed = false;
+    for (field, provider_name) in &legacy_roles {
+        if let Some(Value::String(value)) = map.remove(field) {
+            if !value.is_empty() {
+                legacy_secrets.push((field.clone(), provider_name.clone(), zeroize::Zeroizing::new(value)));
+            }
+            changed = true;
+        }
+    }
+    // Remove legacy plaintext before touching keyring.  If keyring access
+    // fails after this point, the app may require the user to enter the key
+    // again, but it will not leave the old value in settings.json.
+    if changed {
+        store
+            .set(SETTINGS_KEY, Value::Object(map));
+        store
+            .save()
+            .map_err(|_| "无法安全清理旧版凭证，请重试。".to_string())?;
+    }
+    for (field, provider_name) in legacy_roles {
+        if let Some((_, _, value)) = legacy_secrets.iter().find(|(old_field, _, _)| old_field == &field) {
+            if !provider::has_secret(&provider_name)? {
+                provider::set_secret(&provider_name, value.as_str())?;
+            }
+        }
+        provider::migrate_role_secret(&field, &provider_name)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_provider_secret(
+    window: WebviewWindow,
+    provider: String,
+    value: String,
+) -> Result<(), String> {
+    require_main(&window)?;
+    if value.len() > 512 {
+        return Err("API Key 长度超过限制。".into());
+    }
+    provider::set_secret(&provider, &value)
+}
+
+#[tauri::command]
+async fn provider_secret_status(window: WebviewWindow, provider: String) -> Result<bool, String> {
+    require_main(&window)?;
+    provider::has_secret(&provider)
+}
+
+#[tauri::command]
+async fn start_translation(
+    window: WebviewWindow,
+    app: AppHandle,
+    request: provider::TranslationRequest,
+    state: State<'_, provider::ProviderState>,
+) -> Result<(), String> {
+    if !matches!(window.label(), "main" | "popup" | "capture") {
+        return Err("该窗口不允许发起翻译请求。".into());
+    }
+    provider::validate_request(&request)?;
+    state.cancel_window(window.label());
+    if state
+        .active
+        .lock()
+        .map_err(|_| "请求状态不可用。".to_string())?
+        .contains_key(&request.request_id)
+    {
+        return Err("请求 ID 已存在。".into());
+    }
+    if !state.reserve(2) {
+        return Err("当前已有太多进行中的请求，请稍后重试。".into());
+    }
+
+    let request_id = request.request_id.clone();
+    let cleanup_id = request_id.clone();
+    let request_token = std::sync::Arc::new(());
+    let cleanup_token = request_token.clone();
+    let window_label = window.label().to_string();
+    let active = state.active.clone();
+    let shared = std::sync::Arc::new(state.inner().clone());
+    let reservations = state.inner().clone();
+    let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+    let task = tauri::async_runtime::spawn(async move {
+        if start_rx.await.is_err() {
+            return;
+        }
+        provider::run_request(app, window_label.clone(), request, shared).await;
+        let removed = active
+            .lock()
+            .map(|mut requests| {
+                if requests
+                    .get(&cleanup_id)
+                    .is_some_and(|item| std::sync::Arc::ptr_eq(&item.token, &cleanup_token))
+                {
+                    requests.remove(&cleanup_id).is_some()
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+        if removed {
+            reservations.release();
+        }
+    });
+    let cell = std::sync::Arc::new(std::sync::Mutex::new(Some(task)));
+    let mut requests = match state.active.lock() {
+        Ok(requests) => requests,
+        Err(_) => {
+            state.release();
+            let item = provider::ActiveRequest {
+                window_label: window.label().to_string(),
+                handle: cell,
+                token: request_token,
+            };
+            item.abort();
+            return Err("请求状态不可用。".into());
+        }
+    };
+    requests.insert(
+        request_id.clone(),
+        provider::ActiveRequest {
+            window_label: window.label().to_string(),
+            handle: cell,
+            token: request_token,
+        },
+    );
+    if start_tx.send(()).is_err() {
+        if let Some(item) = requests.remove(&request_id) {
+            state.release();
+            item.abort();
+        }
+        return Err("请求启动失败。".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn cancel_translation(
+    window: WebviewWindow,
+    request_id: String,
+    state: State<'_, provider::ProviderState>,
+) -> Result<(), String> {
+    if !matches!(window.label(), "main" | "popup" | "capture") {
+        return Err("该窗口不允许取消翻译请求。".into());
+    }
+    let item = {
+        let mut requests = state
+            .active
+            .lock()
+            .map_err(|_| "请求状态不可用。".to_string())?;
+        if let Some(item) = requests.get(&request_id) {
+            if item.window_label != window.label() {
+                return Err("无权取消其他窗口的请求。".into());
+            }
+        }
+        requests.remove(&request_id)
+    };
+    if let Some(item) = item {
+        state.release();
+        item.abort();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn check_for_updates(window: WebviewWindow, app: AppHandle) -> Result<update::UpdateCheckResult, String> {
+    if window.label() != "main" {
+        return Err("该操作只能由主窗口发起。".into());
+    }
+    let current = app.package_info().version.to_string();
+    let state = app
+        .try_state::<update::UpdateState>()
+        .ok_or_else(|| "更新状态不可用。".to_string())?;
+    state.allow_check()?;
+    update::check_update_async(&current)
+        .await
+        .map_err(|_| "更新检查失败。".to_string())
+}
+
+#[tauri::command]
+async fn download_verified_update(
+    window: WebviewWindow,
+    app: AppHandle,
+    version: String,
+    state: State<'_, update::UpdateState>,
+) -> Result<update::VerifiedUpdate, String> {
+    update::download_verified(&window, &app, &state, version).await
+}
+
+#[tauri::command]
+async fn launch_verified_update(
+    window: WebviewWindow,
+    version: String,
+    state: State<'_, update::UpdateState>,
+) -> Result<(), String> {
+    update::launch_verified(&window, &state, version)
+}
+
+#[tauri::command]
+async fn secure_history_get(window: WebviewWindow, app: AppHandle) -> Result<Vec<Value>, String> {
+    secure_store::history_get(&window, &app)
+}
+
+#[tauri::command]
+async fn secure_history_add(window: WebviewWindow, app: AppHandle, record: Value) -> Result<(), String> {
+    secure_store::history_add(&window, &app, record)
+}
+
+#[tauri::command]
+async fn secure_history_delete(window: WebviewWindow, app: AppHandle, id: String) -> Result<(), String> {
+    secure_store::history_delete(&window, &app, id)
+}
+
+#[tauri::command]
+async fn secure_history_clear(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
+    secure_store::history_clear(&window, &app)
+}
+
+#[tauri::command]
+async fn secure_cache_get(window: WebviewWindow, app: AppHandle) -> Result<Vec<Value>, String> {
+    secure_store::cache_get(&window, &app)
+}
+
+#[tauri::command]
+async fn secure_cache_put(window: WebviewWindow, app: AppHandle, records: Vec<Value>) -> Result<(), String> {
+    secure_store::cache_put(&window, &app, records)
+}
+
+#[tauri::command]
+async fn secure_cache_clear(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
+    secure_store::cache_clear(&window, &app)
 }
 
 // ---- 开机自启动 ----
 
 #[tauri::command]
-async fn get_autostart_status(app: AppHandle) -> Result<bool, String> {
+async fn get_autostart_status(window: WebviewWindow, app: AppHandle) -> Result<bool, String> {
+    require_main(&window)?;
     let autostart = app.autolaunch();
     autostart
         .is_enabled()
@@ -198,7 +476,8 @@ async fn get_autostart_status(app: AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
-async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+async fn set_autostart(window: WebviewWindow, app: AppHandle, enabled: bool) -> Result<(), String> {
+    require_main(&window)?;
     let autostart = app.autolaunch();
     if enabled {
         autostart
@@ -212,27 +491,21 @@ async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn diagnostic_snapshot(app: AppHandle) -> Result<DiagnosticSnapshot, String> {
+async fn diagnostic_snapshot(window: WebviewWindow, app: AppHandle) -> Result<DiagnosticSnapshot, String> {
+    require_main(&window)?;
     let tesseract = Command::new("tesseract").arg("--version").output();
     let (tesseract_available, tesseract_version, tesseract_error) = match tesseract {
         Ok(output) if output.status.success() => {
             let text = String::from_utf8_lossy(&output.stdout);
-            let first_line = text.lines().next().map(|s| s.to_string());
+            let first_line = text
+                .lines()
+                .next()
+                .map(|value| value.chars().take(MAX_DIAGNOSTIC_VERSION_CHARS).collect())
+                .filter(|value: &String| !value.trim().is_empty());
             (true, first_line, None)
         }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            (
-                false,
-                None,
-                Some(if stderr.is_empty() {
-                    format!("tesseract exited with status {}", output.status)
-                } else {
-                    stderr
-                }),
-            )
-        }
-        Err(e) => (false, None, Some(e.to_string())),
+        Ok(_) => (false, None, Some("tesseract 检测失败。".into())),
+        Err(_) => (false, None, Some("tesseract 不可用。".into())),
     };
     Ok(DiagnosticSnapshot {
         app_version: app.package_info().version.to_string(),
@@ -242,34 +515,6 @@ async fn diagnostic_snapshot(app: AppHandle) -> Result<DiagnosticSnapshot, Strin
         tesseract_version,
         tesseract_error,
     })
-}
-
-#[tauri::command]
-async fn save_and_launch_installer(file_name: String, data_base64: String) -> Result<String, String> {
-    let safe_name = Path::new(&file_name)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.trim().is_empty())
-        .ok_or_else(|| "安装包文件名无效。".to_string())?;
-    if !safe_name.to_ascii_lowercase().ends_with(".exe") {
-        return Err("安装包文件名必须以 .exe 结尾。".to_string());
-    }
-
-    let bytes = STANDARD
-        .decode(data_base64.trim())
-        .map_err(|e| format!("安装包数据解码失败: {e}"))?;
-    if bytes.is_empty() {
-        return Err("安装包数据为空。".to_string());
-    }
-
-    let dir = std::env::temp_dir().join("TransLoop").join("updates");
-    fs::create_dir_all(&dir).map_err(|e| format!("创建更新目录失败: {e}"))?;
-    let path = dir.join(safe_name);
-    fs::write(&path, bytes).map_err(|e| format!("保存安装包失败: {e}"))?;
-    Command::new(&path)
-        .spawn()
-        .map_err(|e| format!("启动安装包失败: {e}"))?;
-    Ok(path.to_string_lossy().to_string())
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -340,10 +585,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(provider::ProviderState::default())
+        .manage(update::UpdateState::default())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
@@ -394,13 +640,24 @@ pub fn run() {
             hide_capture,
             ocr_windows,
             ocr_tesseract,
-            set_secret,
-            get_secret,
-            delete_secret,
+            set_provider_secret,
+            provider_secret_status,
+            migrate_legacy_secrets,
+            start_translation,
+            cancel_translation,
+            check_for_updates,
+            download_verified_update,
+            launch_verified_update,
+            secure_history_get,
+            secure_history_add,
+            secure_history_delete,
+            secure_history_clear,
+            secure_cache_get,
+            secure_cache_put,
+            secure_cache_clear,
             get_autostart_status,
             set_autostart,
             diagnostic_snapshot,
-            save_and_launch_installer
         ])
         .run(tauri::generate_context!())
         .expect("error while running TransLoop");
