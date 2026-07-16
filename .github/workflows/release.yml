@@ -65,7 +65,7 @@ jobs:
           $tag = $env:GITHUB_REF_NAME
           $notes = "RELEASE_NOTES_$env:TRANSLOOP_VERSION.md"
           if (-not (Test-Path $notes)) {
-            $notes = "RELEASE_NOTES_1.0.0.md"
+            throw "Missing release notes file: $notes"
           }
           gh release create $tag `
             --verify-tag `
