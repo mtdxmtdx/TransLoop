@@ -205,7 +205,10 @@ fn require_allowed(window: &WebviewWindow, allowed: &[&str]) -> Result<(), Strin
 
 #[tauri::command]
 async fn migrate_legacy_secrets(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
-    require_main(&window)?;
+    // Migration is performed entirely in Rust and never returns secret values
+    // to the WebView. All internal app windows may trigger this idempotent
+    // operation while loading settings, but the window label is still checked.
+    require_allowed(&window, &["main", "popup", "capture"])?;
     let store = app
         .store(STORE_FILE)
         .map_err(|error| format!("打开设置失败: {error}"))?;
