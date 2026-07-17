@@ -434,11 +434,14 @@ async fn read_limited(mut response: Response, max_bytes: usize) -> Result<Vec<u8
 
 fn trusted_url(value: &str) -> Result<String> {
     let url = Url::parse(value)?;
+    // GitHub Release assets redirect to signed CDN URLs whose query contains
+    // temporary authorization parameters.  The host allowlist below still
+    // prevents arbitrary destinations, so query parameters are safe to carry
+    // through without logging or interpreting them.
     if url.scheme() != "https"
         || url.username() != ""
         || url.password().is_some()
         || url.port().is_some()
-        || url.query().is_some()
         || url.fragment().is_some()
         || !matches!(
             url.host_str(),
@@ -554,7 +557,8 @@ mod tests {
         assert!(trusted_url("https://github.com/mtdxmtdx/TransLoop/releases/download/v1.0.0/a.exe").is_ok());
         assert!(trusted_url("https://evil.example/a.exe").is_err());
         assert!(trusted_url("http://github.com/a.exe").is_err());
-        assert!(trusted_url("https://github.com/a.exe?redirect=evil").is_err());
+        assert!(trusted_url("https://github.com/a.exe?redirect=evil").is_ok());
+        assert!(trusted_url("https://release-assets.githubusercontent.com/asset.exe?token=temporary").is_ok());
         assert!(trusted_url("https://github.com:444/a.exe").is_err());
     }
 
