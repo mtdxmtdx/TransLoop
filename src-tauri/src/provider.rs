@@ -193,6 +193,33 @@ pub struct ProviderState {
     reservations: Arc<AtomicUsize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RatePolicy {
+    per_minute: usize,
+    burst: usize,
+    interval: Duration,
+}
+
+fn rate_policy(operation: &str) -> RatePolicy {
+    match operation {
+        "vision_translate" | "vision_recognize" => RatePolicy {
+            per_minute: 30,
+            burst: 1,
+            interval: Duration::from_secs(2),
+        },
+        "test" => RatePolicy {
+            per_minute: 12,
+            burst: 1,
+            interval: Duration::from_secs(5),
+        },
+        _ => RatePolicy {
+            per_minute: 60,
+            burst: 1,
+            interval: Duration::from_secs(1),
+        },
+    }
+}
+
 impl ProviderState {
     pub fn reserve(&self, max: usize) -> bool {
         self.reservations
@@ -233,11 +260,7 @@ impl ProviderState {
     }
 
     pub fn allow(&self, provider: &str, operation: &str) -> bool {
-        let (limit, burst) = match operation {
-            "vision_translate" | "vision_recognize" => (4usize, 1usize),
-            "test" => (3usize, 1usize),
-            _ => (20usize, 3usize),
-        };
+        let policy = rate_policy(operation);
         let key = format!("{provider}:{operation}");
         let now = Instant::now();
         let mut windows = match self.rate_windows.lock() {
@@ -251,12 +274,11 @@ impl ProviderState {
         {
             history.pop_front();
         }
-        let interval = Duration::from_secs_f64(60.0 / limit as f64);
-        let allowed = history.len() < limit
-            && (history.len() < burst
+        let allowed = history.len() < policy.per_minute
+            && (history.len() < policy.burst
                 || history
                     .back()
-                    .is_some_and(|last| now.duration_since(*last) >= interval));
+                    .is_some_and(|last| now.duration_since(*last) >= policy.interval));
         if allowed {
             history.push_back(now);
         }
@@ -1014,6 +1036,46 @@ fn hash_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_rate_policies_match_requested_limits() {
+        assert_eq!(
+            rate_policy("text"),
+            RatePolicy {
+                per_minute: 60,
+                burst: 1,
+                interval: Duration::from_secs(1),
+            }
+        );
+        assert_eq!(
+            rate_policy("vision_translate"),
+            RatePolicy {
+                per_minute: 30,
+                burst: 1,
+                interval: Duration::from_secs(2),
+            }
+        );
+        assert_eq!(rate_policy("vision_recognize").interval, Duration::from_secs(2));
+        assert_eq!(
+            rate_policy("test"),
+            RatePolicy {
+                per_minute: 12,
+                burst: 1,
+                interval: Duration::from_secs(5),
+            }
+        );
+    }
+
+    #[test]
+    fn local_rate_limiter_blocks_immediate_repeats() {
+        let state = ProviderState::default();
+        assert!(state.allow("openai", "text"));
+        assert!(!state.allow("openai", "text"));
+        assert!(state.allow("openai", "vision_translate"));
+        assert!(!state.allow("openai", "vision_translate"));
+        assert!(state.allow("openai", "test"));
+        assert!(!state.allow("openai", "test"));
+    }
 
     #[test]
     fn rejects_non_official_or_redirectable_provider_urls() {
