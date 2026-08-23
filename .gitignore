@@ -3,12 +3,12 @@ dist
 dist-ssr
 *.local
 .vite
+.pnpm-store
 
 # Local credentials/configuration. Release signing keys belong in CI secrets.
 .env
 .env.*
 !.env.example
-
 # Rust / Tauri
 src-tauri/target
 src-tauri/gen

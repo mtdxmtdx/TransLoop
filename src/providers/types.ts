@@ -12,6 +12,7 @@ export interface ProviderMeta {
   label: string;
   defaultBaseUrl: string;
   defaultModel: string;
+  defaultVisionModel?: string;
   supportVision: boolean;
   implemented: boolean;
 }
@@ -22,7 +23,8 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     label: "DeepSeek",
     defaultBaseUrl: "https://api.deepseek.com",
     defaultModel: "deepseek-v4-flash",
-    supportVision: false,
+    defaultVisionModel: "deepseek-v4-flash-vision-exp",
+    supportVision: true,
     implemented: true,
   },
   {
@@ -30,6 +32,7 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     label: "OpenAI",
     defaultBaseUrl: "https://api.openai.com/v1",
     defaultModel: "gpt-4o-mini",
+    defaultVisionModel: "gpt-4o-mini",
     supportVision: true,
     implemented: true,
   },
@@ -38,6 +41,7 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     label: "Anthropic Claude",
     defaultBaseUrl: "https://api.anthropic.com/v1",
     defaultModel: "claude-sonnet-4-6",
+    defaultVisionModel: "claude-sonnet-4-6",
     supportVision: true,
     implemented: true,
   },
@@ -46,6 +50,7 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     label: "Google Gemini",
     defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
     defaultModel: "gemini-2.0-flash",
+    defaultVisionModel: "gemini-2.0-flash",
     supportVision: true,
     implemented: true,
   },
@@ -54,6 +59,7 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     label: "通义千问 Qwen",
     defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     defaultModel: "qwen3-vl-flash",
+    defaultVisionModel: "qwen3-vl-flash",
     supportVision: true,
     implemented: true,
   },
@@ -62,6 +68,7 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     label: "xAI Grok",
     defaultBaseUrl: "https://api.x.ai/v1",
     defaultModel: "grok-2-vision-latest",
+    defaultVisionModel: "grok-2-vision-latest",
     supportVision: true,
     implemented: true,
   },
@@ -74,6 +81,16 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     implemented: true,
   },
 ];
+
+/** 判断指定的 Provider 和模型是否支持图片输入。 */
+export function isVisionSupported(provider: ProviderName, model?: string): boolean {
+  if (provider === "minimax") return false;
+  if (provider === "deepseek") {
+    const m = (model ?? "").trim().toLowerCase();
+    return m === "deepseek-v4-flash-vision-exp" || m.includes("vision") || m.includes("vl");
+  }
+  return true;
+}
 
 /** 语言代码 → 英文描述，供构造系统 prompt 使用。 */
 const LANG_NAME: Record<string, string> = {

@@ -40,6 +40,7 @@ const MAX_AGE_DAYS = 90;
 
 const MODEL_PRICES_USD_PER_1M: Record<string, { input: number; output: number }> = {
   "deepseek-v4-flash": { input: 0.14, output: 0.28 },
+  "deepseek-v4-flash-vision-exp": { input: 0.14, output: 0.28 },
   "gpt-4o-mini": { input: 0.15, output: 0.6 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
   "gemini-2.0-flash": { input: 0.1, output: 0.4 },

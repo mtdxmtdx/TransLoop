@@ -351,7 +351,7 @@ pub async fn run_request(
 
     for candidate in candidates {
         if matches!(request.operation.as_str(), "vision_translate" | "vision_recognize")
-            && !supports_vision(&candidate.provider)
+            && !supports_vision(&candidate.provider, &candidate.model)
         {
             let failure = Failure::unsupported();
             attempts.push(attempt_from_failure(&candidate, 0, &failure, "skipped"));
@@ -568,8 +568,15 @@ fn is_provider(value: &str) -> bool {
     matches!(value, "deepseek" | "openai" | "claude" | "gemini" | "qwen" | "grok" | "minimax")
 }
 
-fn supports_vision(value: &str) -> bool {
-    matches!(value, "openai" | "claude" | "gemini" | "qwen" | "grok")
+fn supports_vision(provider: &str, model: &str) -> bool {
+    match provider {
+        "openai" | "claude" | "gemini" | "qwen" | "grok" => true,
+        "deepseek" => {
+            let m = model.trim().to_ascii_lowercase();
+            m == "deepseek-v4-flash-vision-exp" || m.contains("vision") || m.contains("vl")
+        }
+        _ => false,
+    }
 }
 
 fn validate_provider_config(provider: &str, base_url: &str, model: &str) -> Result<(), String> {
@@ -1092,5 +1099,16 @@ mod tests {
         assert!(split_image_data_url(&png).is_ok());
         let fake = format!("data:image/png;base64,{}", STANDARD.encode(b"not png"));
         assert!(split_image_data_url(&fake).is_err());
+    }
+
+    #[test]
+    fn validates_provider_vision_support() {
+        assert!(supports_vision("deepseek", "deepseek-v4-flash-vision-exp"));
+        assert!(supports_vision("deepseek", "deepseek-vl2"));
+        assert!(!supports_vision("deepseek", "deepseek-v4-flash"));
+        assert!(!supports_vision("deepseek", "deepseek-chat"));
+        assert!(supports_vision("openai", "gpt-4o-mini"));
+        assert!(supports_vision("qwen", "qwen3-vl-flash"));
+        assert!(!supports_vision("minimax", "abab6.5s-chat"));
     }
 }

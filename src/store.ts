@@ -161,7 +161,8 @@ export function normalizeSettings(input: unknown): AppSettings {
       normalizeProviderUrl(recognizeProvider, source.recognizeBaseUrl) ??
       recognizeMeta.defaultBaseUrl,
     recognizeModel:
-      boundedString(source.recognizeModel, MAX_MODEL_LENGTH) ?? recognizeMeta.defaultModel,
+      boundedString(source.recognizeModel, MAX_MODEL_LENGTH) ??
+      (recognizeMeta.defaultVisionModel ?? recognizeMeta.defaultModel),
     fallbackEnabled: booleanOrDefault(source.fallbackEnabled, DEFAULT_SETTINGS.fallbackEnabled),
     fallbackModels: stringArray(source.fallbackModels, MAX_MODEL_LENGTH, 20),
     fallbackProviderOrder: providerArray(source.fallbackProviderOrder, 7),

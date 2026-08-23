@@ -8,7 +8,11 @@ import {
   setProviderKey,
   type AppSettings,
 } from "./store";
-import { PROVIDER_REGISTRY, type ProviderName } from "./providers/types";
+import {
+  PROVIDER_REGISTRY,
+  isVisionSupported,
+  type ProviderName,
+} from "./providers/types";
 import { HotkeyInput } from "./HotkeyInput";
 import { testProviderConnection, type ProviderAttempt } from "./translationRuntime";
 import { clearTranslationCache } from "./translationCache";
@@ -131,8 +135,19 @@ export function SettingsModal({
     [draft.recognizeProvider],
   );
 
-  // 模式 A 下实际处理图片的模型：协作时是识别模型，否则是翻译提供方。
-  const visionMeta = draft.visionCollab ? recognizeMeta : providerMeta;
+  // 模式 A 下实际处理图片的模型是否支持多模态输入。
+  const isVisionReady = useMemo(() => {
+    if (draft.visionCollab) {
+      return isVisionSupported(draft.recognizeProvider, draft.recognizeModel);
+    }
+    return isVisionSupported(draft.provider, draft.model);
+  }, [
+    draft.visionCollab,
+    draft.recognizeProvider,
+    draft.recognizeModel,
+    draft.provider,
+    draft.model,
+  ]);
 
   // 仅支持多模态、且已实现的提供方可作为识别模型。
   const visionProviders = useMemo(
@@ -184,7 +199,8 @@ export function SettingsModal({
       ...prev,
       recognizeProvider: next,
       recognizeBaseUrl: meta?.defaultBaseUrl ?? prev.recognizeBaseUrl,
-      recognizeModel: meta?.defaultModel ?? prev.recognizeModel,
+      recognizeModel:
+        meta?.defaultVisionModel ?? meta?.defaultModel ?? prev.recognizeModel,
     }));
     setStatus({ kind: "idle", text: "" });
   }
@@ -446,11 +462,11 @@ export function SettingsModal({
               <option value="B">B · Windows 系统 OCR（离线免费，再调用翻译接口）</option>
               <option value="C">C · Tesseract 本地 OCR（离线兜底，需本机安装）</option>
             </select>
-            {draft.ocrMode === "A" && !visionMeta?.supportVision && (
+            {draft.ocrMode === "A" && !isVisionReady && (
               <span className="hint" style={{ color: "#d44" }}>
                 {draft.visionCollab
-                  ? "下方「识别模型」不支持图片输入，请改用 OpenAI / Claude / Gemini / Qwen3-VL / Grok。"
-                  : "当前翻译提供方不支持图片输入。模式 A 请选择支持多模态的提供方（OpenAI / Claude / Gemini / Qwen3-VL / Grok），或开启多模型协作单独指定识别模型。"}
+                  ? "下方「识别模型」不支持图片输入，请改用 DeepSeek (deepseek-v4-flash-vision-exp) / OpenAI / Claude / Gemini / Qwen3-VL / Grok。"
+                  : "当前翻译提供方或所选模型不支持图片输入。模式 A 请选择支持多模态的模型（如 DeepSeek deepseek-v4-flash-vision-exp / OpenAI / Claude / Gemini / Qwen3-VL / Grok），或开启多模型协作单独指定识别模型。"}
               </span>
             )}
             {draft.ocrMode === "B" && (
@@ -529,7 +545,11 @@ export function SettingsModal({
                         type="text"
                         value={draft.recognizeModel}
                         onChange={(e) => update("recognizeModel", e.target.value)}
-                        placeholder={recognizeMeta?.defaultModel ?? "模型名称"}
+                        placeholder={
+                          recognizeMeta?.defaultVisionModel ??
+                          recognizeMeta?.defaultModel ??
+                          "模型名称"
+                        }
                         spellCheck={false}
                       />
                     </div>
