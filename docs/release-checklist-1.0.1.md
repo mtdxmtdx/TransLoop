@@ -1,5 +1,7 @@
 # TransLoop 1.0.1 发布检查清单
 
+> 历史版本检查清单，仅用于发布追溯；当前发布流程以 `.github/workflows/release.yml` 和当前版本的 `RELEASE_NOTES_*.md` 为准。
+
 ## 自动化与本地构建
 
 - [ ] `pnpm install --frozen-lockfile`

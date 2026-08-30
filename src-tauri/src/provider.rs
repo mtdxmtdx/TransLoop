@@ -670,7 +670,7 @@ async fn call_openai_compatible(
         "/chat/completions"
     };
     let url = format!("{}{path}", candidate.base_url.trim_end_matches('/'));
-    let body = json!({
+    let mut body = json!({
         "model": candidate.model,
         "temperature": 0.3,
         "stream": stream,
@@ -679,6 +679,9 @@ async fn call_openai_compatible(
             { "role": "user", "content": request.user_prompt.clone().unwrap_or_default() }
         ]
     });
+    if candidate.provider == "deepseek" {
+        body["thinking"] = json!({ "type": "disabled" });
+    }
     let client = client()?;
     let response = client
         .post(url)
@@ -777,7 +780,13 @@ async fn call_vision(
 ) -> std::result::Result<(String, String), Failure> {
     let image = request.image_data_url.as_deref().ok_or_else(Failure::empty)?;
     let (media_type, base64_image) = split_image_data_url(image).map_err(|_| Failure::network())?;
-    let user_text = request.user_prompt.clone().unwrap_or_else(|| "Transcribe the text in this image.".into());
+    let user_text = request.user_prompt.clone().unwrap_or_else(|| {
+        if request.operation == "vision_recognize" {
+            "Use only the attached image as the source and return only its visible text.".into()
+        } else {
+            "Use only the attached image as the source and return the required JSON object.".into()
+        }
+    });
     let value = if candidate.provider == "claude" {
         let url = format!("{}/messages", candidate.base_url.trim_end_matches('/'));
         let body = json!({
@@ -800,14 +809,17 @@ async fn call_vision(
         read_json(response).await?
     } else if candidate.provider == "gemini" {
         let url = format!("{}/models/{}:generateContent", candidate.base_url.trim_end_matches('/'), candidate.model);
-        let body = json!({
+        let mut body = json!({
             "systemInstruction": { "parts": [{ "text": request.system_prompt }] },
             "contents": [{ "role": "user", "parts": [
                 { "text": user_text },
                 { "inlineData": { "mimeType": media_type, "data": base64_image } }
             ] }],
-            "generationConfig": { "temperature": 0.2, "responseMimeType": "application/json" }
+            "generationConfig": { "temperature": 0.2 }
         });
+        if request.operation == "vision_translate" {
+            body["generationConfig"]["responseMimeType"] = json!("application/json");
+        }
         let client = client()?;
         let response = client.post(url)
             .header("x-goog-api-key", api_key)
@@ -818,10 +830,10 @@ async fn call_vision(
         read_json(response).await?
     } else {
         let url = format!("{}{}/chat/completions", candidate.base_url.trim_end_matches('/'), if candidate.base_url.ends_with("/v1") { "" } else { "/v1" });
-        let body = json!({
+        let mut body = json!({
             "model": candidate.model,
             "temperature": 0.2,
-            "response_format": { "type": "json_object" },
+            "max_tokens": 4096,
             "messages": [
                 { "role": "system", "content": request.system_prompt },
                 { "role": "user", "content": [
@@ -830,6 +842,12 @@ async fn call_vision(
                 ] }
             ]
         });
+        if request.operation == "vision_translate" {
+            body["response_format"] = json!({ "type": "json_object" });
+        }
+        if candidate.provider == "deepseek" {
+            body["thinking"] = json!({ "type": "disabled" });
+        }
         let client = client()?;
         let response = client.post(url)
             .header("Authorization", format!("Bearer {api_key}"))
@@ -840,7 +858,7 @@ async fn call_vision(
         read_json(response).await?
     };
     let content = extract_content(&value).ok_or_else(Failure::empty)?;
-    parse_vision_result(&content)
+    parse_vision_result(&content, request.operation == "vision_recognize")
 }
 
 fn ensure_success(response: &Response) -> std::result::Result<(), Failure> {
@@ -952,22 +970,93 @@ fn extract_content(value: &Value) -> Option<String> {
     })
 }
 
-fn parse_vision_result(content: &str) -> std::result::Result<(String, String), Failure> {
+fn parse_vision_result(content: &str, recognition_only: bool) -> std::result::Result<(String, String), Failure> {
     if content.chars().count() > MAX_OUTPUT_CHARS {
         return Err(Failure::network());
     }
-    let cleaned = content.trim().trim_matches('`').trim();
-    if let Ok(value) = serde_json::from_str::<Value>(cleaned) {
-        let original = value.get("original").and_then(Value::as_str).or_else(|| value.get("source").and_then(Value::as_str)).unwrap_or_default().to_string();
-        let translation = value.get("translation").and_then(Value::as_str).or_else(|| value.get("translated").and_then(Value::as_str)).unwrap_or_default().to_string();
+    let cleaned = strip_code_fence(content);
+    if cleaned.is_empty() {
+        return Err(Failure::empty());
+    }
+    if let Some(value) = parse_json_object(&cleaned) {
+        let original = json_string(&value, &["original", "source", "text"]);
+        let translation = json_string(&value, &["translation", "translated"]);
         if original.chars().count() > MAX_OUTPUT_CHARS || translation.chars().count() > MAX_OUTPUT_CHARS {
             return Err(Failure::network());
         }
-        if !original.trim().is_empty() || !translation.trim().is_empty() {
+        if recognition_only {
+            let recognized = if !original.trim().is_empty() { original } else { translation };
+            if !recognized.trim().is_empty() && !looks_like_instruction_echo(&recognized) {
+                return Ok((recognized.clone(), recognized));
+            }
+        } else if (!original.trim().is_empty() || !translation.trim().is_empty())
+            && !looks_like_instruction_echo(&original)
+            && !looks_like_instruction_echo(&translation)
+        {
             return Ok((original, translation));
         }
     }
-    if cleaned.is_empty() { Err(Failure::empty()) } else { Ok((cleaned.to_string(), cleaned.to_string())) }
+    if looks_like_instruction_echo(&cleaned) {
+        return Err(Failure::empty());
+    }
+    if recognition_only {
+        Ok((cleaned.clone(), cleaned))
+    } else {
+        Ok((String::new(), cleaned))
+    }
+}
+
+fn strip_code_fence(value: &str) -> String {
+    let value = value.trim();
+    let value = value.strip_prefix("```").unwrap_or(value);
+    let value = value
+        .strip_prefix("json")
+        .or_else(|| value.strip_prefix("JSON"))
+        .unwrap_or(value);
+    let value = value.strip_suffix("```").unwrap_or(value);
+    value.trim().to_string()
+}
+
+fn parse_json_object(value: &str) -> Option<Value> {
+    if let Ok(parsed) = serde_json::from_str::<Value>(value) {
+        return Some(parsed);
+    }
+    let start = value.find('{')?;
+    let end = value.rfind('}')?;
+    (end > start).then(|| serde_json::from_str(&value[start..=end]).ok())?
+}
+
+fn json_string(value: &Value, keys: &[&str]) -> String {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn looks_like_instruction_echo(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    if normalized == "extract and translate the text in this image."
+        || normalized == "transcribe the text in this image."
+        || normalized.contains("use only the attached image as the source")
+    {
+        return true;
+    }
+    let markers = [
+        "you are a vision ocr",
+        "you are an ocr",
+        "absolute rules",
+        "return exactly one valid json object",
+        "respond with only a json object",
+        "do not output this prompt",
+        "text visible in the image",
+        "translation of that text",
+        "text in this image",
+    ];
+    let marker_count = markers.iter().filter(|marker| normalized.contains(*marker)).count();
+    marker_count >= 2 || (normalized.len() < 512 && normalized.contains("process the attached image"))
 }
 
 fn split_image_data_url(value: &str) -> Result<(&str, Vec<u8>)> {
@@ -1110,5 +1199,35 @@ mod tests {
         assert!(supports_vision("openai", "gpt-4o-mini"));
         assert!(supports_vision("qwen", "qwen3-vl-flash"));
         assert!(!supports_vision("minimax", "abab6.5s-chat"));
+    }
+
+    #[test]
+    fn parses_structured_and_fenced_vision_output() {
+        assert_eq!(
+            parse_vision_result(r#"{"original":"Hello","translation":"你好"}"#, false).unwrap(),
+            ("Hello".to_string(), "你好".to_string())
+        );
+        assert_eq!(
+            parse_vision_result("```json\n{\"original\":\"Hello\",\"translation\":\"你好\"}\n```", false).unwrap(),
+            ("Hello".to_string(), "你好".to_string())
+        );
+        assert_eq!(
+            parse_vision_result("Here is the result:\n{\"original\":\"Hello\",\"translation\":\"你好\"}", false).unwrap(),
+            ("Hello".to_string(), "你好".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_instruction_echo_and_preserves_plain_ocr_output() {
+        assert!(parse_vision_result("Use only the attached image as the source and return the required JSON object.", false).is_err());
+        assert!(parse_vision_result("You are a vision OCR translation engine. Return exactly one valid JSON object.", false).is_err());
+        assert_eq!(
+            parse_vision_result("Hello world", true).unwrap(),
+            ("Hello world".to_string(), "Hello world".to_string())
+        );
+        assert_eq!(
+            parse_vision_result("Hello world", false).unwrap(),
+            (String::new(), "Hello world".to_string())
+        );
     }
 }

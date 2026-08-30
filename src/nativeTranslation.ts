@@ -164,7 +164,7 @@ export async function runNativeVisionTranslation(input: {
     model: input.settings.model,
     settings: input.settings,
     systemPrompt: buildVisionTranslateSystemPrompt(input.fromLang, input.toLang),
-    userPrompt: "Extract and translate the text in this image.",
+    userPrompt: "Use only the attached image as the source and return the required JSON object.",
     imageDataUrl: input.imageDataUrl,
   });
 }
@@ -182,7 +182,7 @@ export async function runNativeVisionRecognition(input: {
     model: input.settings.recognizeModel,
     settings: input.settings,
     systemPrompt: buildVisionRecognizeSystemPrompt(input.fromLang),
-    userPrompt: "Transcribe the text in this image.",
+    userPrompt: "Use only the attached image as the source and return only its visible text.",
     imageDataUrl: input.imageDataUrl,
   });
 }

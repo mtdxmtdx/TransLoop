@@ -95,6 +95,10 @@ export async function loadSettings(): Promise<AppSettings> {
     throw new Error("无法安全迁移旧版凭证，请重启应用后重试。");
   }
   const store = await getStore();
+  // Popup and capture windows stay alive while the main window can save new
+  // settings. Refresh the shared store before reading so language changes are
+  // visible without requiring the user to toggle the selector twice.
+  await store.reload({ ignoreDefaults: true });
   const saved = await store.get<unknown>(SETTINGS_KEY);
   return normalizeSettings(saved);
 }

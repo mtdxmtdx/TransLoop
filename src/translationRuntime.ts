@@ -386,7 +386,10 @@ function resolveLanguageDirection(
   toLang: string,
   settings: AppSettings,
 ): { fromLang: string; toLang: string } {
-  if (!settings.smartDirectionEnabled || fromLang !== "auto") {
+  // A direct image request has no OCR text yet.  Smart direction cannot
+  // detect a source language from an empty string, so it must preserve the
+  // user's explicit target language until text has been recognized.
+  if (!text.trim() || !settings.smartDirectionEnabled || fromLang !== "auto") {
     return { fromLang, toLang };
   }
   const detected = detectSourceLanguage(text);

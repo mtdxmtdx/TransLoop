@@ -84,9 +84,12 @@ export function CaptureView() {
     imagePreview?: string,
     targetOverride?: string,
   ) {
+    // The screenshot window's target-language selector is explicit.  Smart
+    // direction is useful for free-form text, but must not replace the target
+    // chosen for a screenshot translation.
     const effectiveSettings = targetOverride
       ? { ...settings, toLang: targetOverride, smartDirectionEnabled: false }
-      : settings;
+      : { ...settings, smartDirectionEnabled: false };
     setTargetLang(effectiveSettings.toLang);
     setState({ kind: "running", stage: "翻译中…" });
     const result = await runTextTranslation(

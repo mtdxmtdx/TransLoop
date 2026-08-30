@@ -23,5 +23,5 @@
 - **安全约定**：WebView 严禁直接存储或读取明文 API Key；翻译历史与缓存必须通过 DPAPI 加密。
 
 ## 5. 当前状态与下一步
-- 当前版本：`1.0.3`（已支持 DeepSeek 视觉模型 `deepseek-v4-flash-vision-exp`）
+- 当前版本：`1.0.4`（已支持 DeepSeek 视觉模型 `deepseek-v4-flash-vision-exp`；截图翻译提示词回显防护与目标语言同步修复已完成，本地构建已验证）
 - 下一步：`1.1.0` 增强 OCR 质量与段落/代码块结构恢复。

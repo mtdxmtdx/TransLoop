@@ -1,3 +1,5 @@
+import { APP_NAME, APP_VERSION } from "./appInfo";
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -12,7 +14,7 @@ export function PrivacyModal({ open, onClose, onAcknowledge }: Props) {
         <header className="settings-header">
           <div>
             <h2>隐私政策</h2>
-            <p>TransLoop 1.0.0 · 本地桌面应用</p>
+            <p>{APP_NAME} {APP_VERSION} · 本地桌面应用</p>
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="关闭" title="关闭">
             ×

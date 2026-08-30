@@ -1,5 +1,7 @@
 # TransLoop 0.9.0 RC 发布检查清单
 
+> 历史版本检查清单，仅用于发布追溯；当前发布流程以 `.github/workflows/release.yml` 和当前版本的 `RELEASE_NOTES_*.md` 为准。
+
 ## 构建
 
 - [ ] `npm run build`
