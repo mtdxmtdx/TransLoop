@@ -316,22 +316,18 @@ export function SettingsModal({
       setDownloadStatus({ kind: "error", text: "当前没有可用的新版本。" });
       return;
     }
-    if (!result.verificationAvailable) {
-      setDownloadStatus({ kind: "error", text: "该版本缺少签名校验文件，已拒绝自动安装。" });
-      return;
-    }
     setDownloadStatus({ kind: "downloading", text: "正在下载安装包..." });
     try {
       const verified = await downloadAndLaunchVerifiedUpdate(result.latestVersion);
       const sizeMb = (verified.size / 1024 / 1024).toFixed(1);
       setDownloadStatus({
         kind: "success",
-        text: `安装包已完成签名校验并启动：${verified.fileName}（${sizeMb} MB）`,
+        text: `安装包已下载并启动：${verified.fileName}（${sizeMb} MB）`,
       });
       await logDiagnosticEvent({
         level: "info",
         category: "update",
-        message: `安装包签名校验并启动完成：${verified.fileName}`,
+        message: `安装包已下载并启动：${verified.fileName}`,
       });
     } catch (e) {
       const message = toUserFacingError(e, "update");

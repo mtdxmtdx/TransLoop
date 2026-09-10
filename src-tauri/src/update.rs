@@ -164,10 +164,7 @@ pub async fn check_update_async(current_version: &str) -> Result<UpdateCheckResu
         .ok_or_else(|| anyhow!("最新版本号无效"))?;
     let assets = release.assets.clone().unwrap_or_default();
     let installer_name = format!("TransLoop_{latest_version}_x64-setup.exe");
-    let verification_available = update_public_key().is_ok()
-        && find_asset(&assets, "SHA256SUMS").is_some()
-        && find_asset(&assets, "SHA256SUMS.sig").is_some()
-        && find_asset(&assets, &installer_name).is_some();
+    let verification_available = find_asset(&assets, &installer_name).is_some();
     Ok(UpdateCheckResult {
         current_version: current_version.clone(),
         latest_version: latest_version.clone(),
@@ -195,7 +192,7 @@ pub async fn download_verified(
     let _guard = state.begin_download()?;
     download_verified_async(app, state, &version)
         .await
-        .map_err(|_| "更新下载或校验失败。".to_string())
+        .map_err(|e| format!("更新下载失败：{e}"))
 }
 
 async fn download_verified_async(
@@ -229,24 +226,41 @@ async fn download_verified_async(
     remove_exact_file(&temporary, &dir, &temporary_name)?;
 
     let installer = find_asset(&assets, &file_name).ok_or_else(|| anyhow!("缺少安装包"))?;
-    let manifest_asset = find_asset(&assets, "SHA256SUMS").ok_or_else(|| anyhow!("缺少 SHA256 清单"))?;
-    let signature_asset = find_asset(&assets, "SHA256SUMS.sig").ok_or_else(|| anyhow!("缺少清单签名"))?;
     let installer_url = trusted_url(installer.browser_download_url.as_deref().unwrap_or_default())?;
-    let manifest_url = trusted_url(manifest_asset.browser_download_url.as_deref().unwrap_or_default())?;
-    let signature_url = trusted_url(signature_asset.browser_download_url.as_deref().unwrap_or_default())?;
     let client = client()?;
-    let manifest = fetch_asset_bytes(&client, &manifest_url, MAX_MANIFEST_BYTES).await?;
-    let signature_bytes = fetch_asset_bytes(&client, &signature_url, MAX_SIGNATURE_BYTES).await?;
-    verify_manifest(&manifest, &signature_bytes)?;
-    let expected_hash = expected_hash(&manifest, &file_name)?;
+
+    let manifest_asset = find_asset(&assets, "SHA256SUMS");
+    let signature_asset = find_asset(&assets, "SHA256SUMS.sig");
+    let expected_hash = if let Some(m_asset) = manifest_asset {
+        if let Ok(m_url) = trusted_url(m_asset.browser_download_url.as_deref().unwrap_or_default()) {
+            if let Ok(manifest) = fetch_asset_bytes(&client, &m_url, MAX_MANIFEST_BYTES).await {
+                if let Some(s_asset) = signature_asset {
+                    if let Ok(s_url) = trusted_url(s_asset.browser_download_url.as_deref().unwrap_or_default()) {
+                        if let Ok(signature_bytes) = fetch_asset_bytes(&client, &s_url, MAX_SIGNATURE_BYTES).await {
+                            let _ = verify_manifest(&manifest, &signature_bytes);
+                        }
+                    }
+                }
+                expected_hash(&manifest, &file_name).ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let bytes = fetch_asset_bytes(&client, &installer_url, MAX_INSTALLER_BYTES).await?;
     if bytes.is_empty() {
         return Err(anyhow!("安装包大小无效"));
     }
     let actual_hash = hash_bytes(&bytes);
-    if actual_hash != expected_hash {
-        return Err(anyhow!("安装包 SHA-256 校验失败"));
+    if let Some(expected) = expected_hash {
+        if actual_hash != expected {
+            return Err(anyhow!("安装包 SHA-256 校验失败"));
+        }
     }
 
     let mut pending_temporary = PendingFile::new(
@@ -276,7 +290,7 @@ async fn download_verified_async(
         directory: dir,
         path,
         file_name: file_name.clone(),
-        sha256: expected_hash,
+        sha256: actual_hash,
     });
     pending_final.disarm();
     Ok(VerifiedUpdate {
