@@ -23,7 +23,7 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
     label: "DeepSeek",
     defaultBaseUrl: "https://api.deepseek.com",
     defaultModel: "deepseek-v4-flash",
-    defaultVisionModel: "deepseek-v4-flash-vision-exp",
+    defaultVisionModel: "deepseek-v4-flash",
     supportVision: true,
     implemented: true,
   },
@@ -83,12 +83,8 @@ export const PROVIDER_REGISTRY: ProviderMeta[] = [
 ];
 
 /** 判断指定的 Provider 和模型是否支持图片输入。 */
-export function isVisionSupported(provider: ProviderName, model?: string): boolean {
+export function isVisionSupported(provider: ProviderName, _model?: string): boolean {
   if (provider === "minimax") return false;
-  if (provider === "deepseek") {
-    const m = (model ?? "").trim().toLowerCase();
-    return m === "deepseek-v4-flash-vision-exp" || m.includes("vision") || m.includes("vl");
-  }
   return true;
 }
 

@@ -5,8 +5,8 @@ TransLoop 是一款面向 Windows 的桌面划词翻译与截图 OCR 翻译工�
 ## 下载
 
 - 最新安装包请前往 [GitHub Releases](https://github.com/mtdxmtdx/TransLoop/releases)。
-- Windows x64 用户下载 `TransLoop_1.0.4_x64-setup.exe` 并运行安装。
-- 从 `1.0.3` 升级到 `1.0.4` 时，设置、Provider API Key、历史记录、缓存和快捷键会继续保留在本机。
+- Windows x64 用户下载 `TransLoop_1.0.5_x64-setup.exe` 并运行安装。
+- 从 `1.0.4` 升级到 `1.0.5` 时，设置、Provider API Key、历史记录、缓存和快捷键会继续保留在本机。
 
 ## 核心功能
 
@@ -72,7 +72,7 @@ OCR 模式 C 依赖本机 Tesseract。请安装 Tesseract OCR，并确认 `tesse
 
 ### 当前 Provider 不支持图片输入怎么办？
 
-截图模式 A 需要支持视觉的模型。可改用 DeepSeek（选择 `deepseek-v4-flash-vision-exp` 模型）/ OpenAI / Claude / Gemini / Qwen-VL / Grok 等支持图片输入的模型，或切换到 OCR 模式 B/C。
+截图模式 A 需要支持视觉的模型。可改用 DeepSeek / OpenAI / Claude / Gemini / Qwen-VL / Grok 等支持图片输入的模型，或切换到 OCR 模式 B/C。
 
 ### API Key 会明文保存吗？
 
@@ -169,6 +169,7 @@ Windows 默认数据目录：`%APPDATA%\com.transloop.app\`
 | 12 | 1.0.2：截图迁移修复与本地请求频率调整 | ✅ |
 | 13 | 1.0.3：DeepSeek 视觉模型支持与体验优化 | ✅ |
 | 14 | 1.0.4：截图翻译目标语言与视觉输出修复 | ✅ |
+| 15 | 1.0.5：DeepSeek 全面多模态支持与截图限制解除 | ✅ |
 
 ## 后续计划
 
@@ -178,6 +179,12 @@ Windows 默认数据目录：`%APPDATA%\com.transloop.app\`
 - 不恢复浏览器插件路线；不在 1.0.x 中加入云同步、团队统计或远程监控。
 
 ## 更新日志
+
+### 1.0.5 · 2026-09-10 — DeepSeek 全面多模态支持与截图限制解除
+
+- **DeepSeek 全面多模态支持**：取消截图翻译 Provider 对 DeepSeek 模型名称的硬编码限制，所有 DeepSeek 模型均支持图片输入与视觉翻译。
+- **默认视觉模型对齐**：DeepSeek 默认视觉模型同步为 `deepseek-v4-flash`。
+- **原生网关放行**：Rust 原生请求网关同步放行 DeepSeek 多模态请求。
 
 ### 1.0.4 · 2026-08-30 — 截图翻译目标语言与视觉输出修复
 

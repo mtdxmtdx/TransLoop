@@ -465,8 +465,8 @@ export function SettingsModal({
             {draft.ocrMode === "A" && !isVisionReady && (
               <span className="hint" style={{ color: "#d44" }}>
                 {draft.visionCollab
-                  ? "下方「识别模型」不支持图片输入，请改用 DeepSeek (deepseek-v4-flash-vision-exp) / OpenAI / Claude / Gemini / Qwen3-VL / Grok。"
-                  : "当前翻译提供方或所选模型不支持图片输入。模式 A 请选择支持多模态的模型（如 DeepSeek deepseek-v4-flash-vision-exp / OpenAI / Claude / Gemini / Qwen3-VL / Grok），或开启多模型协作单独指定识别模型。"}
+                  ? "下方「识别模型」不支持图片输入，请改用 DeepSeek / OpenAI / Claude / Gemini / Qwen3-VL / Grok。"
+                  : "当前翻译提供方或所选模型不支持图片输入。模式 A 请选择支持多模态的模型（如 DeepSeek / OpenAI / Claude / Gemini / Qwen3-VL / Grok），或开启多模型协作单独指定识别模型。"}
               </span>
             )}
             {draft.ocrMode === "B" && (

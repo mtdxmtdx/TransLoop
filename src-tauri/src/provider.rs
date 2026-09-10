@@ -568,15 +568,11 @@ fn is_provider(value: &str) -> bool {
     matches!(value, "deepseek" | "openai" | "claude" | "gemini" | "qwen" | "grok" | "minimax")
 }
 
-fn supports_vision(provider: &str, model: &str) -> bool {
-    match provider {
-        "openai" | "claude" | "gemini" | "qwen" | "grok" => true,
-        "deepseek" => {
-            let m = model.trim().to_ascii_lowercase();
-            m == "deepseek-v4-flash-vision-exp" || m.contains("vision") || m.contains("vl")
-        }
-        _ => false,
-    }
+fn supports_vision(provider: &str, _model: &str) -> bool {
+    matches!(
+        provider,
+        "deepseek" | "openai" | "claude" | "gemini" | "qwen" | "grok"
+    )
 }
 
 fn validate_provider_config(provider: &str, base_url: &str, model: &str) -> Result<(), String> {
@@ -1194,8 +1190,8 @@ mod tests {
     fn validates_provider_vision_support() {
         assert!(supports_vision("deepseek", "deepseek-v4-flash-vision-exp"));
         assert!(supports_vision("deepseek", "deepseek-vl2"));
-        assert!(!supports_vision("deepseek", "deepseek-v4-flash"));
-        assert!(!supports_vision("deepseek", "deepseek-chat"));
+        assert!(supports_vision("deepseek", "deepseek-v4-flash"));
+        assert!(supports_vision("deepseek", "deepseek-chat"));
         assert!(supports_vision("openai", "gpt-4o-mini"));
         assert!(supports_vision("qwen", "qwen3-vl-flash"));
         assert!(!supports_vision("minimax", "abab6.5s-chat"));

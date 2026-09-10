@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { loadSettings } from "./store";
+import { loadSettings, saveSettings } from "./store";
 import { addHistory } from "./history";
 import { runTextTranslation } from "./translationRuntime";
 import { toUserFacingError } from "./userFacingError";
@@ -201,6 +201,10 @@ export function Popup() {
 
   async function handleTargetLangChange(next: string) {
     setTargetLang(next);
+    // 记住用户的选择：写回设置，下次唤起时继续使用上次的目标语言。
+    loadSettings()
+      .then((settings) => saveSettings({ ...settings, toLang: next }))
+      .catch(() => {});
     if (state.kind === "idle") return;
     const text = draftSource.trim();
     if (!text) return;
